@@ -145,8 +145,11 @@ export default function UsersPage() {
   };
 
   const handleEdit = (e: any) => {
-    const userId = e.data.id;
-    router.push(`/users/edit/${userId}`);
+    // DevExpress DataGrid'de buton onClick'inde e.row.data, onRowClick'te e.data kullanılır
+    const rowData = e.row?.data || e.data;
+    if (rowData && rowData.id) {
+      router.push(`/users/edit/${rowData.id}`);
+    }
   };
 
   const handleSelectedDelete = () => {

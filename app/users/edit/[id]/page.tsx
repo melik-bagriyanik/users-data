@@ -1,11 +1,28 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Form, { Item, Label, ButtonItem, GroupItem } from 'devextreme-react/form';
 import Button from 'devextreme-react/button';
 import { getAuthCookie } from '@/lib/cookies';
 import type { User } from '../page';
+
+const getMockUser = (id: number): User => {
+  return {
+    id,
+    email: 'example@gmail.com',
+    username: 'example_user',
+    name: { firstname: 'Example', lastname: 'User' },
+    address: {
+      city: 'Istanbul',
+      street: 'Example Street',
+      number: 1,
+      zipcode: '34000',
+      geolocation: { lat: '41.0082', long: '28.9784' },
+    },
+    phone: '555-0000',
+  };
+};
 
 export default function EditUserPage() {
   const router = useRouter();
@@ -13,7 +30,7 @@ export default function EditUserPage() {
   const userId = params?.id as string;
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [formData, setFormData] = useState<any>({});
+  const [formData, setFormData] = useState<any>(null);
 
   useEffect(() => {
     const authData = getAuthCookie();
@@ -21,54 +38,43 @@ export default function EditUserPage() {
       router.push('/login');
       return;
     }
-    if (userId) {
-      fetchUser();
-    }
-  }, [userId, router]);
+    
+    if (!userId) return;
 
-  const fetchUser = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`https://fakestoreapi.com/users/${userId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setUser(data);
-        setFormData(data);
-      } else {
-        // API başarısız olursa örnek veri kullan
+    const fetchUser = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch(`https://fakestoreapi.com/users/${userId}`);
+        if (response.ok) {
+          const data = await response.json();
+          setUser(data);
+          setFormData(data);
+        } else {
+          // API başarısız olursa örnek veri kullan
+          const mockUser = getMockUser(parseInt(userId));
+          setUser(mockUser);
+          setFormData(mockUser);
+        }
+      } catch (error) {
+        console.error('Kullanıcı yüklenirken hata:', error);
         const mockUser = getMockUser(parseInt(userId));
         setUser(mockUser);
         setFormData(mockUser);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Kullanıcı yüklenirken hata:', error);
-      const mockUser = getMockUser(parseInt(userId));
-      setUser(mockUser);
-      setFormData(mockUser);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getMockUser = (id: number): User => {
-    return {
-      id,
-      email: 'example@gmail.com',
-      username: 'example_user',
-      name: { firstname: 'Example', lastname: 'User' },
-      address: {
-        city: 'Istanbul',
-        street: 'Example Street',
-        number: 1,
-        zipcode: '34000',
-        geolocation: { lat: '41.0082', long: '28.9784' },
-      },
-      phone: '555-0000',
     };
-  };
+
+    fetchUser();
+  }, [userId, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!formData) {
+      alert('Form verisi yüklenmedi');
+      return;
+    }
 
     try {
       const response = await fetch(`https://fakestoreapi.com/users/${userId}`, {
@@ -97,18 +103,32 @@ export default function EditUserPage() {
     router.push('/users');
   };
 
-  if (loading) {
+  const handleFieldDataChanged = useCallback((e: any) => {
+    if (!e.dataField) return;
+    
+    setFormData((prevFormData) => {
+      if (!prevFormData) return prevFormData;
+      
+      const newFormData = { ...prevFormData };
+      if (e.dataField.startsWith('name.')) {
+        const field = e.dataField.split('.')[1];
+        if (!newFormData.name) newFormData.name = {};
+        newFormData.name[field] = e.value;
+      } else if (e.dataField.startsWith('address.')) {
+        const field = e.dataField.split('.')[1];
+        if (!newFormData.address) newFormData.address = {};
+        newFormData.address[field] = e.value;
+      } else {
+        newFormData[e.dataField] = e.value;
+      }
+      return newFormData;
+    });
+  }, []);
+
+  if (loading || !user || !formData || !formData.id) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-lg">Yükleniyor...</div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="text-lg">Kullanıcı bulunamadı</div>
       </div>
     );
   }
@@ -133,23 +153,7 @@ export default function EditUserPage() {
           <form onSubmit={handleSubmit}>
             <Form
               formData={formData}
-              onFieldDataChanged={(e) => {
-                if (e.dataField) {
-                  const newFormData = { ...formData };
-                  if (e.dataField.startsWith('name.')) {
-                    const field = e.dataField.split('.')[1];
-                    if (!newFormData.name) newFormData.name = {};
-                    newFormData.name[field] = e.value;
-                  } else if (e.dataField.startsWith('address.')) {
-                    const field = e.dataField.split('.')[1];
-                    if (!newFormData.address) newFormData.address = {};
-                    newFormData.address[field] = e.value;
-                  } else {
-                    newFormData[e.dataField] = e.value;
-                  }
-                  setFormData(newFormData);
-                }
-              }}
+              onFieldDataChanged={handleFieldDataChanged}
             >
               <GroupItem caption="Temel Bilgiler">
                 <Item
@@ -212,25 +216,23 @@ export default function EditUserPage() {
               </GroupItem>
 
               <ButtonItem
-                horizontalAlignment="left"
-                colCount={2}
-                buttonOptions={[
-                  {
-                    text: 'İptal',
-                    stylingMode: 'outlined',
-                    type: 'normal',
-                    onClick: handleCancel,
-                  },
-                  {
-                    text: 'Kaydet',
-                    type: 'default',
-                    useSubmitBehavior: true,
-                    stylingMode: 'contained',
-                  },
-                ]}
+                horizontalAlignment="center"
+                buttonOptions={{
+                  text: 'Kaydet',
+                  type: 'default',
+                  useSubmitBehavior: true,
+                  stylingMode: 'contained',
+                }}
               />
             </Form>
           </form>
+          <div className="mt-4 flex justify-center gap-3">
+            <Button
+              text="İptal"
+              stylingMode="outlined"
+              onClick={handleCancel}
+            />
+          </div>
         </div>
       </div>
     </div>
