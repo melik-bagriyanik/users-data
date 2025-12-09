@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import DataGrid, {
   Column,
@@ -41,26 +41,36 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
 
-  useEffect(() => {
-    const authData = getAuthCookie();
-    if (!authData) {
-      router.push('/login');
-      return;
-    }
-    fetchUsers();
-  }, [router]);
-
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
       setLoading(true);
       // FakeStoreAPI'den kullanıcıları çek
       const response = await fetch('https://fakestoreapi.com/users');
+      let apiUsers: User[] = [];
+      
       if (response.ok) {
-        const data = await response.json();
-        setUsers(data);
+        apiUsers = await response.json();
       } else {
         // API başarısız olursa örnek veri kullan
-        setUsers(getMockUsers());
+        apiUsers = getMockUsers();
+      }
+      
+      // LocalStorage'dan yeni eklenen kullanıcıları al
+      try {
+        const newUsersStr = localStorage.getItem('newUsers');
+        if (newUsersStr) {
+          const newUsers: User[] = JSON.parse(newUsersStr);
+          // API'den gelen kullanıcılarla birleştir
+          const allUsers = [...apiUsers, ...newUsers];
+          // ID'ye göre sırala (yeni eklenenler en üstte)
+          allUsers.sort((a, b) => (b.id || 0) - (a.id || 0));
+          setUsers(allUsers);
+        } else {
+          setUsers(apiUsers);
+        }
+      } catch (storageError) {
+        // LocalStorage hatası olursa sadece API verilerini kullan
+        setUsers(apiUsers);
       }
     } catch (error) {
       console.error('Kullanıcılar yüklenirken hata:', error);
@@ -69,7 +79,27 @@ export default function UsersPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const authData = getAuthCookie();
+    if (!authData) {
+      router.push('/login');
+      return;
+    }
+    fetchUsers();
+    
+    // Sayfa focus olduğunda verileri yenile
+    const handleFocus = () => {
+      fetchUsers();
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [router, fetchUsers]);
 
   const getMockUsers = (): User[] => {
     return [
@@ -190,12 +220,20 @@ export default function UsersPage() {
               </p>
             )}
           </div>
-          <Button
-            text="Çıkış Yap"
-            type="danger"
-            stylingMode="contained"
-            onClick={handleLogout}
-          />
+          <div className="flex gap-3">
+            <Button
+              text="Kullanıcı Ekle"
+              type="default"
+              stylingMode="contained"
+              onClick={() => router.push('/users/new')}
+            />
+            <Button
+              text="Çıkış Yap"
+              type="danger"
+              stylingMode="contained"
+              onClick={handleLogout}
+            />
+          </div>
         </div>
 
         {/* DataGrid */}
