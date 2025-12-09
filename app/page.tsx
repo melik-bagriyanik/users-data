@@ -56,10 +56,16 @@ export default function Home() {
           <h2 className="mb-4 text-xl font-semibold text-gray-800">
             Ana Sayfa
           </h2>
-          <p className="text-gray-600">
-            Bu sayfada CRUD işlemleri için DataGrid ve Form komponentleri
-            eklenecektir.
+          <p className="mb-4 text-gray-600">
+            Kullanıcı yönetimi için aşağıdaki butona tıklayarak kullanıcı listesine
+            gidebilirsiniz.
           </p>
+          <Button
+            text="Kullanıcı Listesine Git"
+            type="default"
+            stylingMode="contained"
+            onClick={() => router.push('/users')}
+          />
         </div>
       </div>
     </div>
