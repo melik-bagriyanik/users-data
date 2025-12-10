@@ -239,7 +239,6 @@ export default function UsersPage() {
             keyExpr="id"
             showBorders={true}
             onRowRemoving={handleDelete}
-            onRowClick={handleEdit}
             selectedRowKeys={selectedRowKeys}
             onSelectionChanged={(e) => setSelectedRowKeys(e.selectedRowKeys as number[])}
             height="600px"

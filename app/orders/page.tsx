@@ -23,6 +23,7 @@ export interface Order {
   userId: number;
   date: string;
   products: OrderProduct[];
+  orderType?: string; // Sipariş türü
   __v?: number;
 }
 
@@ -31,6 +32,8 @@ export interface OrderProduct {
   quantity: number;
   product?: Product;
   _uniqueKey?: string; // Unique key for DataGrid
+  title?: string; // Ürün adı override için
+  price?: number; // Fiyat override için
 }
 
 export interface Product {
@@ -147,12 +150,44 @@ export default function OrdersPage() {
         }
       }
       
-      // Birleştir ve sırala
-      const allOrders = [...apiOrders, ...storedOrders];
-      allOrders.sort((a, b) => a.id - b.id);
+      // Birleştir - localStorage'daki siparişler öncelikli (güncel ürün listesi için)
+      const uniqueOrdersMap = new Map<number, Order>();
       
-      console.log('Toplam sipariş sayısı:', allOrders.length, '(API:', apiOrders.length, 'LocalStorage:', storedOrders.length, ')');
-      setOrders(allOrders);
+      // Önce localStorage'dan gelen siparişleri ekle (öncelikli - güncel ürün listesi için)
+      storedOrders.forEach((order) => {
+        const id = typeof order.id === 'number' ? order.id : parseInt(String(order.id), 10) || 0;
+        if (id > 0 && !uniqueOrdersMap.has(id)) {
+          uniqueOrdersMap.set(id, order);
+        }
+      });
+      
+      // Sonra API'den gelen siparişleri ekle (sadece localStorage'da olmayanlar)
+      apiOrders.forEach((order) => {
+        const id = typeof order.id === 'number' ? order.id : parseInt(String(order.id), 10) || 0;
+        if (id > 0 && !uniqueOrdersMap.has(id)) {
+          uniqueOrdersMap.set(id, order);
+        } else if (id > 0 && uniqueOrdersMap.has(id)) {
+          // Duplicate bulundu, API'dekini atla (localStorage'dakini tut - güncel ürün listesi için)
+          console.log(`Sipariş ${id} localStorage'dan yüklendi (güncel ürün listesi)`);
+        }
+      });
+      
+      // Map'ten array'e çevir ve sırala
+      const uniqueOrders = Array.from(uniqueOrdersMap.values());
+      uniqueOrders.sort((a, b) => a.id - b.id);
+      
+      // Temizlenmiş veriyi localStorage'a geri kaydet (sadece localStorage'dan gelen siparişler)
+      const cleanedStoredOrders = uniqueOrders.filter((o) => 
+        storedOrders.some((so) => so.id === o.id)
+      );
+      // localStorage'ı güncelle (güncel ürün listesi ile)
+      localStorage.setItem('newOrders', JSON.stringify(cleanedStoredOrders));
+      if (cleanedStoredOrders.length !== storedOrders.length) {
+        console.log('Duplicate ID\'ler temizlendi. LocalStorage güncellendi.');
+      }
+      
+      console.log('Toplam sipariş sayısı:', uniqueOrders.length, '(API:', apiOrders.length, 'LocalStorage:', storedOrders.length, 'Unique:', uniqueOrders.length, ')');
+      setOrders(uniqueOrders);
     } catch (error) {
       console.error('Siparişler yüklenirken hata:', error);
     }
@@ -256,17 +291,44 @@ export default function OrdersPage() {
     try {
       const newOrder = { ...e.data };
       
-      // ID kontrolü - aynı ID'ye sahip sipariş var mı?
-      const existingOrder = orders.find((o) => o.id === newOrder.id);
-      if (existingOrder && newOrder.id) {
-        alert(`ID ${newOrder.id} zaten kullanılıyor! Lütfen farklı bir ID kullanın.`);
-        return;
-      }
-      
       // ID'yi otomatik oluştur (en yüksek ID + 1)
       const maxId = getMaxOrderId();
       const newId = maxId + 1;
       newOrder.id = newId;
+      
+      // ID kontrolü - aynı ID'ye sahip sipariş var mı? (hem state hem localStorage'dan kontrol et)
+      const existingInState = orders.find((o) => o.id === newId);
+      let existingInStorage = false;
+      try {
+        const stored = localStorage.getItem('newOrders');
+        if (stored) {
+          const storedOrders: Order[] = JSON.parse(stored);
+          existingInStorage = storedOrders.some((o) => o.id === newId);
+        }
+      } catch (e) {
+        console.error('LocalStorage kontrol hatası:', e);
+      }
+      
+      if (existingInState || existingInStorage) {
+        // Eğer ID çakışıyorsa, bir sonraki boş ID'yi bul
+        let nextId = newId + 1;
+        while (orders.some((o) => o.id === nextId)) {
+          try {
+            const stored = localStorage.getItem('newOrders');
+            if (stored) {
+              const storedOrders: Order[] = JSON.parse(stored);
+              if (storedOrders.some((o) => o.id === nextId)) {
+                nextId++;
+                continue;
+              }
+            }
+          } catch (e) {
+            // Hata durumunda devam et
+          }
+          nextId++;
+        }
+        newOrder.id = nextId;
+      }
       
       // Tarih yoksa bugünün tarihini ekle
       if (!newOrder.date) {
@@ -276,6 +338,11 @@ export default function OrdersPage() {
       // Products yoksa boş array ekle
       if (!newOrder.products) {
         newOrder.products = [];
+      }
+      
+      // OrderType yoksa boş string ekle
+      if (!newOrder.orderType) {
+        newOrder.orderType = '';
       }
       
       // ÖNCE LocalStorage'a kaydet - bu çok önemli!
@@ -348,18 +415,30 @@ export default function OrdersPage() {
       const updatedOrder = e.data;
       updatedOrder.id = Number(updatedOrder.id);
       
-      // ID kontrolü - aynı ID'ye sahip başka sipariş var mı?
-      // Eğer ID değiştirilmişse ve başka bir siparişte aynı ID varsa hata
-      const ordersWithSameId = orders.filter((o) => o.id === updatedOrder.id);
-      if (ordersWithSameId.length > 0) {
+      // ID kontrolü - aynı ID'ye sahip başka sipariş var mı? (hem state hem localStorage'dan kontrol et)
+      const ordersWithSameIdInState = orders.filter((o) => o.id === updatedOrder.id);
+      let ordersWithSameIdInStorage: Order[] = [];
+      try {
+        const stored = localStorage.getItem('newOrders');
+        if (stored) {
+          const storedOrders: Order[] = JSON.parse(stored);
+          ordersWithSameIdInStorage = storedOrders.filter((o) => o.id === updatedOrder.id);
+        }
+      } catch (e) {
+        console.error('LocalStorage kontrol hatası:', e);
+      }
+      
+      // Eğer aynı ID'ye sahip birden fazla sipariş varsa (kendisi hariç) hata
+      const totalSameId = ordersWithSameIdInState.length + ordersWithSameIdInStorage.length;
+      if (totalSameId > 1) {
         // Eğer güncellenen sipariş zaten listede varsa ve ID değişmemişse sorun yok
         // Ama eğer ID değiştirilmişse ve başka bir siparişte aynı ID varsa hata
-        const isCurrentOrder = ordersWithSameId.some((o) => {
+        const isCurrentOrder = ordersWithSameIdInState.some((o) => {
           // Basit kontrol: eğer tüm özellikler aynıysa bu mevcut sipariş
           return o.userId === updatedOrder.userId && 
                  o.date === updatedOrder.date;
         });
-        if (!isCurrentOrder && ordersWithSameId.length > 0) {
+        if (!isCurrentOrder) {
           alert(`ID ${updatedOrder.id} zaten kullanılıyor! Lütfen farklı bir ID kullanın.`);
           return;
         }
@@ -455,6 +534,13 @@ export default function OrdersPage() {
           const product = products.find((p) => p.id === newProduct.productId);
           if (product) {
             productWithDetails.product = product;
+            // Eğer title ve price yoksa product'tan kopyala
+            if (!productWithDetails.title) {
+              productWithDetails.title = product.title;
+            }
+            if (productWithDetails.price === undefined) {
+              productWithDetails.price = product.price;
+            }
           }
         }
         
@@ -519,100 +605,179 @@ export default function OrdersPage() {
     if (!selectedOrderId) return;
     
     try {
-      const updatedProduct = e.data;
+      // DevExpress'ten gelen veri yapısını kontrol et
+      // onRowUpdated event'inde: e.data = yeni veri, e.key = satır key'i, e.oldData = eski veri
+      const updatedProduct = e.data || e.newData || e.row?.data;
+      const uniqueKey = e.key || updatedProduct?._uniqueKey;
+      
+      console.log('handleProductRowUpdated çağrıldı:', { 
+        key: e.key, 
+        data: e.data, 
+        newData: e.newData,
+        oldData: e.oldData,
+        updatedProduct,
+        uniqueKey 
+      });
+      
+      if (!uniqueKey) {
+        console.error('Güncellenecek ürün key bulunamadı:', e);
+        return;
+      }
+      
       const order = orders.find((o) => o.id === selectedOrderId);
-      if (order) {
-        // ProductId değiştiyse, aynı productId'ye sahip başka ürün var mı kontrol et
-        const currentProduct = (order.products || []).find(
-          (p) => p._uniqueKey === updatedProduct._uniqueKey
+      if (!order) {
+        console.error('Sipariş bulunamadı:', selectedOrderId);
+        return;
+      }
+      
+      // Mevcut ürünü bul
+      const currentProduct = (order.products || []).find(
+        (p) => p._uniqueKey === uniqueKey
+      );
+      
+      if (!currentProduct) {
+        console.error('Güncellenecek ürün siparişte bulunamadı:', uniqueKey);
+        return;
+      }
+      
+      // ProductId değiştiyse, aynı productId'ye sahip başka ürün var mı kontrol et
+      if (updatedProduct.productId && 
+          currentProduct.productId !== updatedProduct.productId) {
+        const existingProduct = (order.products || []).find(
+          (p) => p.productId === updatedProduct.productId && p._uniqueKey !== uniqueKey
         );
-        if (currentProduct && updatedProduct.productId && 
-            currentProduct.productId !== updatedProduct.productId) {
-          const existingProduct = (order.products || []).find(
-            (p) => p.productId === updatedProduct.productId && p._uniqueKey !== updatedProduct._uniqueKey
-          );
-          if (existingProduct) {
-            alert(`Bu siparişte zaten productId ${updatedProduct.productId} bulunuyor! Lütfen farklı bir ürün ID kullanın.`);
-            return;
+        if (existingProduct) {
+          alert(`Bu siparişte zaten productId ${updatedProduct.productId} bulunuyor! Lütfen farklı bir ürün ID kullanın.`);
+          return;
+        }
+      }
+      
+      // Ürün bilgilerini yükle (productId değiştiyse)
+      // Eğer updatedProduct yoksa, e.data veya e.newData'dan al
+      const newProductData = updatedProduct || e.data || e.newData || {};
+      
+      // Mevcut ürün verisini koru ve yeni verilerle birleştir
+      let productWithDetails = {
+        ...currentProduct,
+        ...newProductData,
+        _uniqueKey: uniqueKey, // Unique key'i her zaman koru
+      };
+      
+      // ProductId varsa ve değiştiyse, yeni product bilgisini yükle
+      if (productWithDetails.productId && products.length > 0) {
+        const product = products.find((p) => p.id === productWithDetails.productId);
+        if (product) {
+          productWithDetails.product = product;
+          // Eğer title ve price yoksa product'tan kopyala
+          if (!productWithDetails.title) {
+            productWithDetails.title = product.title;
+          }
+          if (productWithDetails.price === undefined) {
+            productWithDetails.price = product.price;
+          }
+        } else {
+          // Eğer product bulunamazsa, mevcut product'ı koru
+          productWithDetails.product = currentProduct.product;
+        }
+      } else if (currentProduct.product) {
+        // Eğer productId yoksa ama mevcut product varsa koru
+        productWithDetails.product = currentProduct.product;
+        // Eğer title ve price yoksa mevcut product'tan kopyala
+        if (!productWithDetails.title) {
+          productWithDetails.title = currentProduct.title || currentProduct.product.title;
+        }
+        if (productWithDetails.price === undefined) {
+          productWithDetails.price = currentProduct.price !== undefined ? currentProduct.price : currentProduct.product.price;
+        }
+      }
+      
+      // Quantity'yi number'a çevir
+      if (productWithDetails.quantity !== undefined) {
+        productWithDetails.quantity = Number(productWithDetails.quantity) || 1;
+      }
+      
+      // ProductId'yi number'a çevir
+      if (productWithDetails.productId !== undefined) {
+        productWithDetails.productId = Number(productWithDetails.productId) || 0;
+      }
+      
+      console.log('Ürün güncelleniyor:', {
+        uniqueKey,
+        currentProduct,
+        productWithDetails
+      });
+      
+      const updatedProducts = (order.products || []).map((p) =>
+        p._uniqueKey === uniqueKey ? productWithDetails : p
+      );
+      const updatedOrder = { ...order, products: updatedProducts };
+      
+      // LocalStorage'ı güncelle - HER ZAMAN localStorage'a kaydet
+      try {
+        const stored = localStorage.getItem('newOrders');
+        let storedOrders: Order[] = [];
+        
+        if (stored) {
+          try {
+            storedOrders = JSON.parse(stored);
+            if (!Array.isArray(storedOrders)) {
+              storedOrders = [];
+            }
+          } catch (parseError) {
+            console.error('LocalStorage parse hatası:', parseError);
+            storedOrders = [];
           }
         }
         
-        // Ürün bilgilerini yükle (productId değiştiyse)
-        let productWithDetails = { ...updatedProduct };
-        if (updatedProduct.productId && products.length > 0) {
-          const product = products.find((p) => p.id === updatedProduct.productId);
+        const index = storedOrders.findIndex((o) => o.id === selectedOrderId);
+        if (index >= 0) {
+          storedOrders[index] = updatedOrder;
+        } else {
+          // Eğer localStorage'da yoksa ekle (API'den gelen siparişler için)
+          storedOrders.push(updatedOrder);
+        }
+        
+        localStorage.setItem('newOrders', JSON.stringify(storedOrders));
+        console.log('Ürün güncellendi, localStorage güncellendi. Sipariş ID:', selectedOrderId, 'Ürün ID:', updatedProduct.productId);
+      } catch (storageError) {
+        console.error('LocalStorage güncelleme hatası:', storageError);
+        alert('Ürün güncellenirken bir hata oluştu!');
+        return;
+      }
+      
+      // State'i güncelle
+      const updatedOrders = orders.map((o) => (o.id === selectedOrderId ? updatedOrder : o));
+      setOrders(updatedOrders);
+      
+      // selectedOrderProducts state'ini de güncelle
+      const updatedSelectedProducts = updatedProducts.map((op, index) => {
+        let productWithDetails = { ...op };
+        if (!productWithDetails.product && op.productId) {
+          const product = products.find((p) => p.id === op.productId);
           if (product) {
             productWithDetails.product = product;
           }
-        } else if (updatedProduct.product) {
-          // Eğer product zaten varsa koru
-          productWithDetails.product = updatedProduct.product;
         }
-        
-        // Unique key'i koru veya oluştur
         if (!productWithDetails._uniqueKey) {
-          const index = (order.products || []).findIndex(
-            (p) => p._uniqueKey === updatedProduct._uniqueKey
-          );
-          productWithDetails._uniqueKey = updatedProduct._uniqueKey || 
-            `${selectedOrderId}-${updatedProduct.productId}-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        } else {
-          // Mevcut key'i koru
-          productWithDetails._uniqueKey = updatedProduct._uniqueKey;
+          productWithDetails._uniqueKey = `${selectedOrderId}-${op.productId}-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         }
-        
-        const updatedProducts = (order.products || []).map((p) =>
-          p._uniqueKey === updatedProduct._uniqueKey ? productWithDetails : p
-        );
-        const updatedOrder = { ...order, products: updatedProducts };
-        
-        // LocalStorage'ı güncelle
-        try {
-          const stored = localStorage.getItem('newOrders');
-          let storedOrders: Order[] = [];
-          
-          if (stored) {
-            try {
-              storedOrders = JSON.parse(stored);
-              if (!Array.isArray(storedOrders)) {
-                storedOrders = [];
-              }
-            } catch (parseError) {
-              console.error('LocalStorage parse hatası:', parseError);
-              storedOrders = [];
-            }
-          }
-          
-          const index = storedOrders.findIndex((o) => o.id === selectedOrderId);
-          if (index >= 0) {
-            storedOrders[index] = updatedOrder;
-          } else {
-            // Eğer localStorage'da yoksa ekle
-            storedOrders.push(updatedOrder);
-          }
-          
-          localStorage.setItem('newOrders', JSON.stringify(storedOrders));
-          console.log('Ürün güncellendi, localStorage güncellendi:', updatedProduct.productId);
-        } catch (storageError) {
-          console.error('LocalStorage güncelleme hatası:', storageError);
-        }
-        
-        // State'i güncelle
-        setOrders(orders.map((o) => (o.id === selectedOrderId ? updatedOrder : o)));
-        
-        // API'ye gönder (opsiyonel)
-        try {
-          await fetch(`https://fakestoreapi.com/carts/${selectedOrderId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updatedOrder),
-          });
-        } catch (apiError) {
-          console.error('API hatası:', apiError);
-        }
+        return productWithDetails;
+      });
+      setSelectedOrderProducts(updatedSelectedProducts);
+      
+      // API'ye gönder (opsiyonel)
+      try {
+        await fetch(`https://fakestoreapi.com/carts/${selectedOrderId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedOrder),
+        });
+      } catch (apiError) {
+        console.error('API hatası:', apiError);
       }
     } catch (error) {
       console.error('Ürün güncellenirken hata:', error);
+      alert('Ürün güncellenirken bir hata oluştu!');
     }
   };
 
@@ -620,62 +785,102 @@ export default function OrdersPage() {
     if (!selectedOrderId) return;
     
     try {
-      const removedProduct = e.data;
+      // DevExpress'ten gelen veri yapısını kontrol et
+      const removedProduct = e.data || e.row?.data || e.key;
+      const uniqueKey = removedProduct?._uniqueKey || e.key;
+      
+      if (!uniqueKey) {
+        console.error('Silinecek ürün bulunamadı:', e);
+        return;
+      }
+      
       const order = orders.find((o) => o.id === selectedOrderId);
-      if (order) {
-        // Unique key'e göre sil
-        const updatedProducts = (order.products || []).filter(
-          (p) => p._uniqueKey !== removedProduct._uniqueKey
+      if (!order) {
+        console.error('Sipariş bulunamadı:', selectedOrderId);
+        return;
+      }
+      
+      // Unique key'e göre sil
+      let updatedProducts = (order.products || []).filter(
+        (p) => p._uniqueKey !== uniqueKey
+      );
+      
+      // Eğer hiçbir ürün silinmediyse, productId ile de dene
+      if (updatedProducts.length === (order.products || []).length && removedProduct?.productId) {
+        updatedProducts = (order.products || []).filter(
+          (p) => p.productId !== removedProduct.productId
         );
-        const updatedOrder = { ...order, products: updatedProducts };
+      }
+      
+      const updatedOrder = { ...order, products: updatedProducts };
+      
+      // LocalStorage'ı güncelle - HER ZAMAN localStorage'a kaydet (API'den gelen siparişler için de)
+      try {
+        const stored = localStorage.getItem('newOrders');
+        let storedOrders: Order[] = [];
         
-        // LocalStorage'ı güncelle
-        try {
-          const stored = localStorage.getItem('newOrders');
-          let storedOrders: Order[] = [];
-          
-          if (stored) {
-            try {
-              storedOrders = JSON.parse(stored);
-              if (!Array.isArray(storedOrders)) {
-                storedOrders = [];
-              }
-            } catch (parseError) {
-              console.error('LocalStorage parse hatası:', parseError);
+        if (stored) {
+          try {
+            storedOrders = JSON.parse(stored);
+            if (!Array.isArray(storedOrders)) {
               storedOrders = [];
             }
+          } catch (parseError) {
+            console.error('LocalStorage parse hatası:', parseError);
+            storedOrders = [];
           }
-          
-          const index = storedOrders.findIndex((o) => o.id === selectedOrderId);
-          if (index >= 0) {
-            storedOrders[index] = updatedOrder;
-          } else {
-            // Eğer localStorage'da yoksa ekle
-            storedOrders.push(updatedOrder);
-          }
-          
-          localStorage.setItem('newOrders', JSON.stringify(storedOrders));
-          console.log('Ürün silindi, localStorage güncellendi');
-        } catch (storageError) {
-          console.error('LocalStorage güncelleme hatası:', storageError);
         }
         
-        // State'i güncelle
-        setOrders(orders.map((o) => (o.id === selectedOrderId ? updatedOrder : o)));
-        
-        // API'ye gönder (opsiyonel)
-        try {
-          await fetch(`https://fakestoreapi.com/carts/${selectedOrderId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updatedOrder),
-          });
-        } catch (apiError) {
-          console.error('API hatası:', apiError);
+        const index = storedOrders.findIndex((o) => o.id === selectedOrderId);
+        if (index >= 0) {
+          // Mevcut siparişi güncelle
+          storedOrders[index] = updatedOrder;
+        } else {
+          // Eğer localStorage'da yoksa ekle (API'den gelen siparişler için)
+          storedOrders.push(updatedOrder);
         }
+        
+        localStorage.setItem('newOrders', JSON.stringify(storedOrders));
+        console.log('Ürün silindi, localStorage güncellendi. Sipariş ID:', selectedOrderId, 'Kalan ürün sayısı:', updatedProducts.length);
+      } catch (storageError) {
+        console.error('LocalStorage güncelleme hatası:', storageError);
+        alert('Ürün silinirken bir hata oluştu!');
+        return;
+      }
+      
+      // State'i güncelle
+      const updatedOrders = orders.map((o) => (o.id === selectedOrderId ? updatedOrder : o));
+      setOrders(updatedOrders);
+      
+      // selectedOrderProducts state'ini de güncelle
+      const updatedSelectedProducts = updatedProducts.map((op, index) => {
+        let productWithDetails = { ...op };
+        if (!productWithDetails.product && op.productId) {
+          const product = products.find((p) => p.id === op.productId);
+          if (product) {
+            productWithDetails.product = product;
+          }
+        }
+        if (!productWithDetails._uniqueKey) {
+          productWithDetails._uniqueKey = `${selectedOrderId}-${op.productId}-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        }
+        return productWithDetails;
+      });
+      setSelectedOrderProducts(updatedSelectedProducts);
+      
+      // API'ye gönder (opsiyonel)
+      try {
+        await fetch(`https://fakestoreapi.com/carts/${selectedOrderId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedOrder),
+        });
+      } catch (apiError) {
+        console.error('API hatası:', apiError);
       }
     } catch (error) {
       console.error('Ürün silinirken hata:', error);
+      alert('Ürün silinirken bir hata oluştu!');
     }
   };
 
@@ -802,39 +1007,42 @@ export default function OrdersPage() {
               />
               <Toolbar>
                 <GridItem name="addRowButton" />
-                <GridItem name="saveButton" />
-                <GridItem name="cancelButton" />
+                <GridItem name="saveButton" options={{ icon: 'save' }} />
+                <GridItem name="cancelButton" options={{ icon: 'close' }} />
               </Toolbar>
 
               <Column 
                 dataField="id" 
                 caption="ID" 
-                width={80} 
+                width={50} 
                 allowEditing={false}
                 dataType="number"
               />
               <Column
                 dataField="userId"
                 caption="Kullanıcı ID"
-                width={120}
+                width={90}
                 dataType="number"
-                editorOptions={{ 
-                  valueType: 'number'
-                }}
+                allowEditing={false}
               />
               <Column
                 dataField="date"
                 caption="Tarih"
-                width={150}
+                width={100}
                 dataType="date"
                 editorOptions={{
                   type: 'date'
                 }}
               />
               <Column
+                dataField="orderType"
+                caption="Sipariş Türü"
+                width={150}
+              />
+              <Column
                 dataField="products"
                 caption="Ürün Sayısı"
-                width={120}
+                width={90}
                 allowEditing={false}
                 calculateCellValue={(rowData: Order) => {
                   if (Array.isArray(rowData.products)) {
@@ -842,6 +1050,20 @@ export default function OrdersPage() {
                   }
                   return 0;
                 }}
+              />
+              <Column
+                type="buttons"
+                width={80}
+                buttons={[
+                  {
+                    name: 'edit',
+                    icon: 'edit',
+                  },
+                  {
+                    name: 'delete',
+                    icon: 'trash',
+                  },
+                ]}
               />
             </DataGrid>
           </div>
@@ -867,8 +1089,60 @@ export default function OrdersPage() {
                   onRowInserted={handleProductRowInserted}
                   onRowUpdated={handleProductRowUpdated}
                   onRowRemoved={handleProductRowRemoved}
+                  onSaving={async (e: any) => {
+                    // Satır kaydedilmeden önce güncelleme yap
+                    if (!selectedOrderId) {
+                      e.cancel = true;
+                      return;
+                    }
+                    
+                    try {
+                      const updatedProduct = e.newData || e.data;
+                      const uniqueKey = e.key;
+                      
+                      if (!uniqueKey) {
+                        console.error('onRowSaving: Key bulunamadı');
+                        return;
+                      }
+                      
+                      const order = orders.find((o) => o.id === selectedOrderId);
+                      if (!order) {
+                        console.error('onRowSaving: Sipariş bulunamadı');
+                        e.cancel = true;
+                        return;
+                      }
+                      
+                      const currentProduct = (order.products || []).find(
+                        (p) => p._uniqueKey === uniqueKey
+                      );
+                      
+                      if (!currentProduct) {
+                        console.error('onRowSaving: Ürün bulunamadı');
+                        return;
+                      }
+                      
+                      // ProductId değiştiyse kontrol et
+                      if (updatedProduct?.productId && 
+                          currentProduct.productId !== updatedProduct.productId) {
+                        const existingProduct = (order.products || []).find(
+                          (p) => p.productId === updatedProduct.productId && p._uniqueKey !== uniqueKey
+                        );
+                        if (existingProduct) {
+                          alert(`Bu siparişte zaten productId ${updatedProduct.productId} bulunuyor!`);
+                          e.cancel = true;
+                          return;
+                        }
+                      }
+                      
+                      // Güncelleme işlemini handleProductRowUpdated'a bırak
+                      // Burada sadece validasyon yapıyoruz
+                    } catch (error) {
+                      console.error('onRowSaving hatası:', error);
+                      e.cancel = true;
+                    }
+                  }}
                 >
-                  <Scrolling mode="none" />
+                  <Scrolling mode="standard" />
                   <Paging enabled={true} pageSize={10} />
                   <Editing
                     mode="row"
@@ -879,6 +1153,8 @@ export default function OrdersPage() {
                   />
                   <Toolbar>
                     <GridItem name="addRowButton" />
+                    <GridItem name="saveButton" options={{ icon: 'save' }} />
+                    <GridItem name="cancelButton" options={{ icon: 'close' }} />
                   </Toolbar>
 
                   <Column
@@ -886,9 +1162,7 @@ export default function OrdersPage() {
                     caption="Ürün ID"
                     width={70}
                     dataType="number"
-                    editorOptions={{ 
-                      valueType: 'number'
-                    }}
+                    allowEditing={false}
                   />
                   <Column
                     dataField="quantity"
@@ -901,23 +1175,31 @@ export default function OrdersPage() {
                     }}
                   />
                   <Column
-                    dataField="product.title"
+                    dataField="title"
                     caption="Ürün Adı"
                     width="*"
-                    allowEditing={false}
-                    wordWrapEnabled={true}
+                    setCellValue={(rowData: OrderProduct, value: any) => {
+                      rowData.title = value;
+                    }}
                     calculateCellValue={(rowData: OrderProduct) =>
-                      rowData.product?.title || '-'
+                      rowData.title || rowData.product?.title || '-'
                     }
                   />
                   <Column
-                    dataField="product.price"
+                    dataField="price"
                     caption="Fiyat"
                     width={80}
-                    allowEditing={false}
+                    dataType="number"
                     format="currency"
+                    editorOptions={{ 
+                      valueType: 'number',
+                      min: 0
+                    }}
+                    setCellValue={(rowData: OrderProduct, value: any) => {
+                      rowData.price = value ? Number(value) : undefined;
+                    }}
                     calculateCellValue={(rowData: OrderProduct) =>
-                      rowData.product?.price || 0
+                      rowData.price !== undefined ? rowData.price : (rowData.product?.price || 0)
                     }
                   />
                   <Column
@@ -965,21 +1247,24 @@ export default function OrdersPage() {
                   />
                   <Column
                     type="buttons"
-                    width={120}
+                    width={100}
                     buttons={[
                       {
-                        hint: 'Düzenle',
+                        name: 'edit',
                         icon: 'edit',
-                        onClick: (e: any) => {
-                          // Düzenleme modunu aç
-                          if (productGridRef.current && productGridRef.current.instance) {
-                            productGridRef.current.instance.editRow(e.row.key);
-                          }
-                        },
                       },
-                      'delete',
-                      'save',
-                      'cancel',
+                      {
+                        name: 'delete',
+                        icon: 'trash',
+                      },
+                      {
+                        name: 'save',
+                        icon: 'save',
+                      },
+                      {
+                        name: 'cancel',
+                        icon: 'close',
+                      },
                     ]}
                   />
                 </DataGrid>
