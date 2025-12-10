@@ -11,53 +11,34 @@ import DataGrid, {
   Item as GridItem,
   Scrolling,
 } from 'devextreme-react/data-grid';
-import DateBox from 'devextreme-react/date-box';
-import SelectBox from 'devextreme-react/select-box';
-import Popup from 'devextreme-react/popup';
 import Button from 'devextreme-react/button';
 import { getAuthCookie } from '@/lib/cookies';
 import type { User } from '../users/types';
-
-export interface Order {
-  id: number;
-  userId: number;
-  date: string;
-  products: OrderProduct[];
-  orderType?: string; // Sipariş türü
-  __v?: number;
-}
-
-export interface OrderProduct {
-  productId: number;
-  quantity: number;
-  product?: Product;
-  _uniqueKey?: string; // Unique key for DataGrid
-  title?: string; // Ürün adı override için
-  price?: number; // Fiyat override için
-  image?: string; // Ürün fotoğrafı (base64 veya URL)
-}
-
-export interface Product {
-  id: number;
-  title: string;
-  price: number;
-  description: string;
-  category: string;
-  image: string;
-  rating?: {
-    rate: number;
-    count: number;
-  };
-}
+import type { Order, OrderProduct, Product } from './types';
+import OrderFilters from './components/OrderFilters';
+import ImageModal from './components/ImageModal';
+import { useOrders } from './hooks/useOrders';
+import { useProducts } from './hooks/useProducts';
 
 export default function OrdersPage() {
   const router = useRouter();
-  const [orders, setOrders] = useState<Order[]>([]);
+  const { 
+    orders, 
+    setOrders, 
+    loading, 
+    setLoading, 
+    selectedOrderId, 
+    setSelectedOrderId,
+    getMaxOrderId 
+  } = useOrders();
+  const { 
+    products, 
+    setProducts, 
+    selectedOrderProducts, 
+    setSelectedOrderProducts,
+    getMaxProductId 
+  } = useProducts();
   const [users, setUsers] = useState<User[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
-  const [selectedOrderProducts, setSelectedOrderProducts] = useState<OrderProduct[]>([]);
   const productGridRef = useRef<any>(null);
   
   // Filtreler
@@ -69,80 +50,6 @@ export default function OrdersPage() {
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string>('');
 
-  // Helper: Tüm siparişlerden en yüksek ID'yi bul
-  const getMaxOrderId = useCallback((): number => {
-    const allOrders = [...orders];
-    
-    // LocalStorage'dan da kontrol et
-    try {
-      const stored = localStorage.getItem('newOrders');
-      if (stored) {
-        const storedOrders: Order[] = JSON.parse(stored);
-        allOrders.push(...storedOrders);
-      }
-    } catch (e) {
-      console.error('LocalStorage okuma hatası:', e);
-    }
-    
-    if (allOrders.length === 0) return 0;
-    
-    const ids = allOrders
-      .map((o) => {
-        const id = o.id;
-        if (typeof id === 'number') return id;
-        const parsed = parseInt(String(id), 10);
-        return isNaN(parsed) ? 0 : parsed;
-      })
-      .filter((id) => id > 0);
-    
-    return ids.length > 0 ? Math.max(...ids) : 0;
-  }, [orders]);
-
-  // Helper: Tüm ürünlerden en yüksek productId'yi bul
-  const getMaxProductId = useCallback((): number => {
-    const allProductIds: number[] = [];
-    
-    // API'den gelen ürünlerden
-    products.forEach((p) => {
-      if (p.id && typeof p.id === 'number' && p.id > 0) {
-        allProductIds.push(p.id);
-      }
-    });
-    
-    // Tüm siparişlerdeki ürünlerden
-    orders.forEach((order) => {
-      if (order.products && Array.isArray(order.products)) {
-        order.products.forEach((op) => {
-          if (op.productId && typeof op.productId === 'number' && op.productId > 0) {
-            allProductIds.push(op.productId);
-          }
-        });
-      }
-    });
-    
-    // LocalStorage'dan da kontrol et
-    try {
-      const stored = localStorage.getItem('newOrders');
-      if (stored) {
-        const storedOrders: Order[] = JSON.parse(stored);
-        storedOrders.forEach((order) => {
-          if (order.products && Array.isArray(order.products)) {
-            order.products.forEach((op) => {
-              if (op.productId && typeof op.productId === 'number' && op.productId > 0) {
-                allProductIds.push(op.productId);
-              }
-            });
-          }
-        });
-      }
-    } catch (e) {
-      console.error('LocalStorage okuma hatası:', e);
-    }
-    
-    if (allProductIds.length === 0) return 0;
-    
-    return Math.max(...allProductIds);
-  }, [orders, products]);
 
   const fetchOrders = useCallback(async () => {
     try {
@@ -392,6 +299,11 @@ export default function OrdersPage() {
         newOrder.orderType = '';
       }
       
+      // UserId yoksa veya 0 ise, varsayılan olarak 1 ekle (kullanıcı girebilir)
+      if (!newOrder.userId || newOrder.userId === 0) {
+        newOrder.userId = 1;
+      }
+      
       // ÖNCE LocalStorage'a kaydet - bu çok önemli!
       try {
         const stored = localStorage.getItem('newOrders');
@@ -566,7 +478,7 @@ export default function OrdersPage() {
       if (order) {
         // Eğer productId yoksa veya 0 ise, otomatik ID oluştur
         if (!newProduct.productId || newProduct.productId === 0) {
-          const maxProductId = getMaxProductId();
+          const maxProductId = getMaxProductId(orders, products);
           newProduct.productId = maxProductId + 1;
         }
         
@@ -633,10 +545,29 @@ export default function OrdersPage() {
             storedOrders.push(updatedOrder);
           }
           
-          localStorage.setItem('newOrders', JSON.stringify(storedOrders));
+          // Boyut kontrolü yap
+          const dataString = JSON.stringify(storedOrders);
+          const dataSize = new Blob([dataString]).size;
+          const maxSize = 4 * 1024 * 1024; // 4MB (localStorage genellikle 5-10MB limit)
+          
+          if (dataSize > maxSize) {
+            alert('Veri çok büyük! Lütfen bazı fotoğrafları kaldırın veya daha küçük fotoğraflar kullanın.');
+            console.error('LocalStorage boyut limiti aşıldı:', dataSize, 'bytes');
+            // Yine de state'i güncelle (localStorage olmadan)
+            setOrders(orders.map((o) => (o.id === selectedOrderId ? updatedOrder : o)));
+            return;
+          }
+          
+          localStorage.setItem('newOrders', dataString);
           console.log('Ürün eklendi, localStorage güncellendi:', newProduct.productId);
-        } catch (storageError) {
-          console.error('LocalStorage güncelleme hatası:', storageError);
+        } catch (storageError: any) {
+          if (storageError.name === 'QuotaExceededError') {
+            alert('Depolama alanı dolu! Lütfen bazı fotoğrafları kaldırın veya daha küçük fotoğraflar kullanın.');
+            // Yine de state'i güncelle (localStorage olmadan)
+            setOrders(orders.map((o) => (o.id === selectedOrderId ? updatedOrder : o)));
+          } else {
+            console.error('LocalStorage güncelleme hatası:', storageError);
+          }
         }
         
         // State'i güncelle
@@ -956,83 +887,315 @@ export default function OrdersPage() {
       return;
     }
 
-    // Dosya boyutunu kontrol et (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      alert('Dosya boyutu 5MB\'dan küçük olmalıdır!');
+    // Dosya boyutunu kontrol et (max 1MB - localStorage için daha küçük)
+    if (file.size > 1 * 1024 * 1024) {
+      alert('Dosya boyutu 1MB\'dan küçük olmalıdır!');
+      return;
+    }
+
+    if (!selectedOrderId) {
+      alert('Lütfen önce bir sipariş seçin!');
       return;
     }
 
     try {
-      // Dosyayı base64'e çevir
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const base64Image = event.target?.result as string;
-        
-        // Ürünün image'ini güncelle
-        if (!rowData.product) {
-          rowData.product = {} as Product;
-        }
-        rowData.image = base64Image;
-        rowData.product.image = base64Image;
+      // Resmi sıkıştır ve küçült
+      const compressImage = (file: File, maxWidth: number = 800, maxHeight: number = 800, quality: number = 0.7): Promise<string> => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const img = new Image();
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              let width = img.width;
+              let height = img.height;
 
-        // State'i güncelle
-        const order = orders.find((o) => o.id === selectedOrderId);
-        if (order) {
-          const updatedProducts = order.products.map((p) =>
-            p._uniqueKey === rowData._uniqueKey ? rowData : p
+              // Boyutları orantılı olarak küçült
+              if (width > height) {
+                if (width > maxWidth) {
+                  height = (height * maxWidth) / width;
+                  width = maxWidth;
+                }
+              } else {
+                if (height > maxHeight) {
+                  width = (width * maxHeight) / height;
+                  height = maxHeight;
+                }
+              }
+
+              canvas.width = width;
+              canvas.height = height;
+
+              const ctx = canvas.getContext('2d');
+              if (!ctx) {
+                reject(new Error('Canvas context alınamadı'));
+                return;
+              }
+
+              ctx.drawImage(img, 0, 0, width, height);
+              const compressedBase64 = canvas.toDataURL('image/jpeg', quality);
+              resolve(compressedBase64);
+            };
+            img.onerror = reject;
+            img.src = event.target?.result as string;
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      };
+
+      // Resmi sıkıştır
+      const base64Image = await compressImage(file);
+      
+      // State'i güncelle - mevcut orders state'ini kullan
+      const order = orders.find((o) => o.id === selectedOrderId);
+      if (!order) {
+        console.error('Sipariş bulunamadı:', selectedOrderId);
+        return;
+      }
+
+      // Ürünü bul ve güncelle (yeni eklenen ürünler için de çalışmalı)
+      // Önce _uniqueKey ile bul, yoksa productId ile bul
+      let productIndex = -1;
+      let productToUpdate: OrderProduct | null = null;
+      
+      if (rowData._uniqueKey) {
+        productIndex = (order.products || []).findIndex(
+          (p) => p._uniqueKey === rowData._uniqueKey
+        );
+        if (productIndex >= 0) {
+          productToUpdate = order.products[productIndex];
+        }
+      }
+      
+      // Eğer _uniqueKey ile bulunamadıysa, productId ile dene (yeni eklenen ürünler için)
+      if (productIndex === -1 && rowData.productId) {
+        // En son eklenen ürünü bul (aynı productId'ye sahip en son ürün)
+        // Önce _uniqueKey'i olmayan ürünleri kontrol et (yeni eklenenler)
+        const productsWithoutKey = (order.products || []).filter(
+          (p) => !p._uniqueKey && p.productId === rowData.productId
+        );
+        if (productsWithoutKey.length > 0) {
+          // En son eklenen ürünü al
+          const lastProduct = productsWithoutKey[productsWithoutKey.length - 1];
+          productIndex = (order.products || []).lastIndexOf(lastProduct);
+          if (productIndex >= 0) {
+            productToUpdate = order.products[productIndex];
+          }
+        } else {
+          // _uniqueKey'i olan ürünleri kontrol et
+          const productsWithSameId = (order.products || []).filter(
+            (p) => p.productId === rowData.productId
           );
-          const updatedOrder = { ...order, products: updatedProducts };
+          if (productsWithSameId.length > 0) {
+            // En son eklenen ürünü al (en son index'teki)
+            const lastIndex = (order.products || []).lastIndexOf(productsWithSameId[productsWithSameId.length - 1]);
+            if (lastIndex >= 0) {
+              productIndex = lastIndex;
+              productToUpdate = order.products[lastIndex];
+            }
+          }
+        }
+      }
+      
+      if (productIndex === -1 || !productToUpdate) {
+        // rowData boşsa veya yeterli bilgi yoksa, selectedOrderProducts'tan en son eklenen ürünü bul
+        // (yeni eklenen ve henüz kaydedilmemiş ürünler için)
+        let targetProduct: OrderProduct | null = null;
+        
+        if (!rowData || Object.keys(rowData).length === 0 || !rowData.productId) {
+          // selectedOrderProducts'tan en son eklenen ve henüz kaydedilmemiş ürünü bul
+          // _uniqueKey'i olmayan veya en son eklenen ürünü al
+          const productsWithoutKey = selectedOrderProducts.filter((p) => !p._uniqueKey || !order.products.find((op) => op._uniqueKey === p._uniqueKey));
+          if (productsWithoutKey.length > 0) {
+            targetProduct = productsWithoutKey[productsWithoutKey.length - 1];
+          } else if (selectedOrderProducts.length > 0) {
+            // En son eklenen ürünü al
+            targetProduct = selectedOrderProducts[selectedOrderProducts.length - 1];
+          }
+        } else if (rowData.productId) {
+          // rowData'da productId varsa, onu kullan
+          targetProduct = rowData;
+        }
+        
+        if (targetProduct && targetProduct.productId) {
+          // Ürünü bul veya yeni ürün olarak ekle
+          const existingIndex = (order.products || []).findIndex(
+            (p) => p.productId === targetProduct!.productId && (!p._uniqueKey || p._uniqueKey === targetProduct!._uniqueKey)
+          );
           
-          // LocalStorage'ı güncelle
-          try {
-            const stored = localStorage.getItem('newOrders');
-            let storedOrders: Order[] = [];
+          if (existingIndex >= 0) {
+            // Mevcut ürünü güncelle
+            productIndex = existingIndex;
+            productToUpdate = order.products[existingIndex];
+          } else {
+            // Yeni ürün olarak ekle
+            const newProduct: OrderProduct = {
+              ...targetProduct,
+              image: base64Image,
+              product: {
+                ...(targetProduct.product || {} as Product),
+                image: base64Image,
+              } as Product,
+            };
             
-            if (stored) {
-              try {
-                storedOrders = JSON.parse(stored);
-                if (!Array.isArray(storedOrders)) {
+            // _uniqueKey yoksa oluştur
+            if (!newProduct._uniqueKey) {
+              const productCount = (order.products || []).length;
+              newProduct._uniqueKey = `${selectedOrderId}-${newProduct.productId}-${productCount}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            }
+            
+            const updatedProducts = [...(order.products || []), newProduct];
+            const updatedOrder = { ...order, products: updatedProducts };
+            
+            // LocalStorage'ı güncelle
+            try {
+              const stored = localStorage.getItem('newOrders');
+              let storedOrders: Order[] = [];
+              
+              if (stored) {
+                try {
+                  storedOrders = JSON.parse(stored);
+                  if (!Array.isArray(storedOrders)) {
+                    storedOrders = [];
+                  }
+                } catch (parseError) {
+                  console.error('LocalStorage parse hatası:', parseError);
                   storedOrders = [];
                 }
-              } catch (parseError) {
-                console.error('LocalStorage parse hatası:', parseError);
-                storedOrders = [];
+              }
+              
+              const index = storedOrders.findIndex((o) => o.id === selectedOrderId);
+              if (index >= 0) {
+                storedOrders[index] = updatedOrder;
+              } else {
+                storedOrders.push(updatedOrder);
+              }
+              
+              // Boyut kontrolü yap
+              const dataString = JSON.stringify(storedOrders);
+              const dataSize = new Blob([dataString]).size;
+              const maxSize = 4 * 1024 * 1024; // 4MB (localStorage genellikle 5-10MB limit)
+              
+              if (dataSize > maxSize) {
+                alert('Veri çok büyük! Lütfen bazı fotoğrafları kaldırın veya daha küçük fotoğraflar kullanın.');
+                console.error('LocalStorage boyut limiti aşıldı:', dataSize, 'bytes');
+                return;
+              }
+              
+              localStorage.setItem('newOrders', dataString);
+            } catch (storageError: any) {
+              if (storageError.name === 'QuotaExceededError') {
+                alert('Depolama alanı dolu! Lütfen bazı fotoğrafları kaldırın veya daha küçük fotoğraflar kullanın.');
+              } else {
+                console.error('LocalStorage güncelleme hatası:', storageError);
               }
             }
             
-            const index = storedOrders.findIndex((o) => o.id === selectedOrderId);
-            if (index >= 0) {
-              storedOrders[index] = updatedOrder;
-            } else {
-              storedOrders.push(updatedOrder);
-            }
+            // State'i güncelle
+            const updatedOrders = orders.map((o) => (o.id === selectedOrderId ? updatedOrder : o));
+            setOrders(updatedOrders);
             
-            localStorage.setItem('newOrders', JSON.stringify(storedOrders));
-          } catch (storageError) {
-            console.error('LocalStorage güncelleme hatası:', storageError);
+            // selectedOrderProducts state'ini de güncelle
+            const updatedSelectedProducts = updatedProducts.map((op, index) => {
+              let productWithDetails = { ...op };
+              if (!productWithDetails.product && op.productId) {
+                const product = products.find((p) => p.id === op.productId);
+                if (product) {
+                  productWithDetails.product = product;
+                }
+              }
+              if (!productWithDetails._uniqueKey) {
+                productWithDetails._uniqueKey = `${selectedOrderId}-${op.productId}-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+              }
+              return productWithDetails;
+            });
+            setSelectedOrderProducts(updatedSelectedProducts);
+            return;
           }
-          
-          const updatedOrders = orders.map((o) => (o.id === selectedOrderId ? updatedOrder : o));
-          setOrders(updatedOrders);
-          
-          // selectedOrderProducts state'ini de güncelle
-          const updatedSelectedProducts = updatedProducts.map((op, index) => {
-            let productWithDetails = { ...op };
-            if (!productWithDetails.product && op.productId) {
-              const product = products.find((p) => p.id === op.productId);
-              if (product) {
-                productWithDetails.product = product;
-              }
-            }
-            if (!productWithDetails._uniqueKey) {
-              productWithDetails._uniqueKey = `${selectedOrderId}-${op.productId}-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-            }
-            return productWithDetails;
-          });
-          setSelectedOrderProducts(updatedSelectedProducts);
+        } else {
+          console.warn('Fotoğraf yüklemek için ürün bulunamadı. Lütfen önce ürün bilgilerini girin.');
+          return;
         }
+      }
+
+      // Ürünü güncelle (immutable update)
+      const updatedProduct: OrderProduct = {
+        ...productToUpdate,
+        image: base64Image,
+        product: {
+          ...(productToUpdate.product || {} as Product),
+          image: base64Image,
+        } as Product,
       };
-      reader.readAsDataURL(file);
+
+      const updatedProducts = [...(order.products || [])];
+      updatedProducts[productIndex] = updatedProduct;
+      const updatedOrder = { ...order, products: updatedProducts };
+      
+      // LocalStorage'ı güncelle
+      try {
+        const stored = localStorage.getItem('newOrders');
+        let storedOrders: Order[] = [];
+        
+        if (stored) {
+          try {
+            storedOrders = JSON.parse(stored);
+            if (!Array.isArray(storedOrders)) {
+              storedOrders = [];
+            }
+          } catch (parseError) {
+            console.error('LocalStorage parse hatası:', parseError);
+            storedOrders = [];
+          }
+        }
+        
+        const index = storedOrders.findIndex((o) => o.id === selectedOrderId);
+        if (index >= 0) {
+          storedOrders[index] = updatedOrder;
+        } else {
+          storedOrders.push(updatedOrder);
+        }
+        
+        // Boyut kontrolü yap
+        const dataString = JSON.stringify(storedOrders);
+        const dataSize = new Blob([dataString]).size;
+        const maxSize = 4 * 1024 * 1024; // 4MB (localStorage genellikle 5-10MB limit)
+        
+        if (dataSize > maxSize) {
+          alert('Veri çok büyük! Lütfen bazı fotoğrafları kaldırın veya daha küçük fotoğraflar kullanın.');
+          console.error('LocalStorage boyut limiti aşıldı:', dataSize, 'bytes');
+          return;
+        }
+        
+        localStorage.setItem('newOrders', dataString);
+      } catch (storageError: any) {
+        if (storageError.name === 'QuotaExceededError') {
+          alert('Depolama alanı dolu! Lütfen bazı fotoğrafları kaldırın veya daha küçük fotoğraflar kullanın.');
+        } else {
+          console.error('LocalStorage güncelleme hatası:', storageError);
+        }
+      }
+      
+      // State'i güncelle
+      const updatedOrders = orders.map((o) => (o.id === selectedOrderId ? updatedOrder : o));
+      setOrders(updatedOrders);
+      
+      // selectedOrderProducts state'ini de güncelle
+      const updatedSelectedProducts = updatedProducts.map((op, index) => {
+        let productWithDetails = { ...op };
+        if (!productWithDetails.product && op.productId) {
+          const product = products.find((p) => p.id === op.productId);
+          if (product) {
+            productWithDetails.product = product;
+          }
+        }
+        if (!productWithDetails._uniqueKey) {
+          productWithDetails._uniqueKey = `${selectedOrderId}-${op.productId}-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        }
+        return productWithDetails;
+      });
+      setSelectedOrderProducts(updatedSelectedProducts);
     } catch (error) {
       console.error('Fotoğraf yüklenirken hata:', error);
       alert('Fotoğraf yüklenirken bir hata oluştu!');
@@ -1045,13 +1208,6 @@ export default function OrdersPage() {
     setSelectedUserId(null);
   };
 
-  const userOptions = [
-    { value: null, text: 'Tüm Kullanıcılar' },
-    ...users.map((user) => ({
-      value: user.id,
-      text: `${user.name.firstname} ${user.name.lastname} (${user.username})`,
-    })),
-  ];
 
   if (loading) {
     return (
@@ -1074,55 +1230,17 @@ export default function OrdersPage() {
           />
         </div>
 
-        {/* Filtreler - Toolbar */}
-        <div className="mb-6 rounded-lg bg-white p-6 shadow">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-800">Filtreler</h2>
-            <Button
-              text="Filtreleri Temizle"
-              stylingMode="outlined"
-              onClick={handleClearFilters}
-              disabled={!startDate && !endDate && !selectedUserId}
-            />
-          </div>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                Başlangıç Tarihi
-              </label>
-              <DateBox
-                value={startDate}
-                onValueChanged={(e) => setStartDate(e.value)}
-                placeholder="Başlangıç Tarihi Seçin"
-                displayFormat="dd/MM/yyyy"
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                Bitiş Tarihi
-              </label>
-              <DateBox
-                value={endDate}
-                onValueChanged={(e) => setEndDate(e.value)}
-                placeholder="Bitiş Tarihi Seçin"
-                displayFormat="dd/MM/yyyy"
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                Kullanıcı
-              </label>
-              <SelectBox
-                value={selectedUserId}
-                onValueChanged={(e) => setSelectedUserId(e.value)}
-                dataSource={userOptions}
-                displayExpr="text"
-                valueExpr="value"
-                placeholder="Kullanıcı Seçin"
-              />
-            </div>
-          </div>
-        </div>
+        {/* Filtreler */}
+        <OrderFilters
+          startDate={startDate}
+          endDate={endDate}
+          selectedUserId={selectedUserId}
+          users={users}
+          onStartDateChange={setStartDate}
+          onEndDateChange={setEndDate}
+          onUserIdChange={setSelectedUserId}
+          onClearFilters={handleClearFilters}
+        />
 
         {/* Ana Grid ve Ürün Grid - Yan Yana */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -1201,7 +1319,12 @@ export default function OrdersPage() {
                 caption="Kullanıcı ID"
                 width={90}
                 dataType="number"
-                allowEditing={false}
+                allowEditing={true}
+                editorType="dxNumberBox"
+                editorOptions={{
+                  min: 1,
+                  showSpinButtons: true,
+                }}
               />
               <Column
                 dataField="date"
@@ -1520,26 +1643,11 @@ export default function OrdersPage() {
         </div>
 
         {/* Fotoğraf Modal */}
-        <Popup
+        <ImageModal
           visible={modalVisible}
-          onHiding={() => setModalVisible(false)}
-          showTitle={true}
-          title="Ürün Fotoğrafı"
-          width={600}
-          height={600}
-        >
-          <div className="flex items-center justify-center p-4">
-            {selectedImage ? (
-              <img
-                src={selectedImage}
-                alt="Ürün Fotoğrafı"
-                className="max-h-full max-w-full object-contain"
-              />
-            ) : (
-              <div className="text-gray-500">Fotoğraf bulunamadı</div>
-            )}
-          </div>
-        </Popup>
+          imageUrl={selectedImage}
+          onClose={() => setModalVisible(false)}
+        />
       </div>
     </div>
   );

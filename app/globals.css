@@ -1,10 +1,31 @@
 @import "tailwindcss";
 @import "devextreme/dist/css/dx.light.css";
 
-/* Toolbar butonlarında sadece ikon göster (save ve cancel butonları için) */
-.dx-toolbar .dx-toolbar-button .dx-button-text,
-.dx-toolbar .dx-toolbar-item .dx-button-text {
+/* Toolbar butonlarında sadece ikon göster (save ve cancel butonları için) - sadece DataGrid toolbar'ı için */
+.dx-datagrid .dx-toolbar .dx-toolbar-button .dx-button-text,
+.dx-datagrid .dx-toolbar .dx-toolbar-item .dx-button-text {
   display: none !important;
+}
+
+/* Silme modalındaki butonlarda text göster - tüm popup/dialog butonları için */
+.dx-popup-wrapper .dx-button-text,
+.dx-popup-wrapper .dx-toolbar-item .dx-button-text,
+.dx-popup-wrapper .dx-toolbar-button .dx-button-text,
+.dx-popup .dx-button-text,
+.dx-popup .dx-toolbar-item .dx-button-text,
+.dx-popup .dx-toolbar-button .dx-button-text,
+.dx-popup-content .dx-button-text,
+.dx-popup-content .dx-toolbar-item .dx-button-text,
+.dx-popup-content .dx-toolbar-button .dx-button-text,
+.dx-popup-bottom .dx-button-text,
+.dx-popup-bottom .dx-toolbar-item .dx-button-text,
+.dx-popup-bottom .dx-toolbar-button .dx-button-text,
+.dx-dialog .dx-button-text,
+.dx-dialog .dx-toolbar-item .dx-button-text,
+.dx-dialog .dx-toolbar-button .dx-button-text {
+  display: inline-block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
 }
 
 :root {

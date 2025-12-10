@@ -44,19 +44,59 @@ export default function EditUserPage() {
     const fetchUser = async () => {
       try {
         setLoading(true);
-        const response = await fetch(`https://fakestoreapi.com/users/${userId}`);
-        if (response.ok) {
-          const data = await response.json();
-          setUser(data);
-          setFormData(data);
-        } else {
-          // API başarısız olursa örnek veri kullan
+        
+        // Önce localStorage'dan kontrol et
+        try {
+          const newUsersStr = localStorage.getItem('newUsers');
+          if (newUsersStr) {
+            const newUsers: User[] = JSON.parse(newUsersStr);
+            const foundUser = newUsers.find((u) => u.id === parseInt(userId));
+            if (foundUser) {
+              setUser(foundUser);
+              setFormData(foundUser);
+              setLoading(false);
+              return;
+            }
+          }
+        } catch (storageError) {
+          console.error('LocalStorage okuma hatası:', storageError);
+        }
+        
+        // API'den çek (timeout ile)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 saniye timeout
+        
+        try {
+          const response = await fetch(`https://fakestoreapi.com/users/${userId}`, {
+            signal: controller.signal,
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            setUser(data);
+            setFormData(data);
+          } else {
+            // API başarısız olursa örnek veri kullan
+            const mockUser = getMockUser(parseInt(userId));
+            setUser(mockUser);
+            setFormData(mockUser);
+          }
+        } catch (fetchError: any) {
+          if (fetchError.name === 'AbortError') {
+            console.warn('API çağrısı zaman aşımına uğradı, mock veri kullanılıyor');
+          } else {
+            console.error('API çağrısı hatası:', fetchError);
+          }
+          // Hata durumunda örnek veri kullan
           const mockUser = getMockUser(parseInt(userId));
           setUser(mockUser);
           setFormData(mockUser);
+        } finally {
+          clearTimeout(timeoutId);
         }
       } catch (error) {
         console.error('Kullanıcı yüklenirken hata:', error);
+        // Hata durumunda örnek veri kullan
         const mockUser = getMockUser(parseInt(userId));
         setUser(mockUser);
         setFormData(mockUser);
@@ -77,6 +117,7 @@ export default function EditUserPage() {
     }
 
     try {
+      // API'ye güncelleme isteği gönder (mock)
       const response = await fetch(`https://fakestoreapi.com/users/${userId}`, {
         method: 'PUT',
         headers: {
@@ -85,17 +126,58 @@ export default function EditUserPage() {
         body: JSON.stringify(formData),
       });
 
+      // LocalStorage'a kaydet (hem yeni eklenen hem de API'den gelen kullanıcılar için)
+      try {
+        const newUsersStr = localStorage.getItem('newUsers');
+        const newUsers: User[] = newUsersStr ? JSON.parse(newUsersStr) : [];
+        
+        // Kullanıcıyı bul ve güncelle, yoksa ekle
+        const userIndex = newUsers.findIndex((u) => u.id === parseInt(userId));
+        if (userIndex !== -1) {
+          // Mevcut kullanıcıyı güncelle
+          newUsers[userIndex] = formData as User;
+        } else {
+          // Yeni kullanıcı olarak ekle (API'den gelen kullanıcılar için)
+          newUsers.push(formData as User);
+        }
+        
+        localStorage.setItem('newUsers', JSON.stringify(newUsers));
+      } catch (storageError) {
+        console.error('LocalStorage kaydetme hatası:', storageError);
+      }
+
       if (response.ok || response.status === 200) {
         alert('Kullanıcı başarıyla güncellendi!');
         router.push('/users');
+        router.refresh();
       } else {
         alert('Kullanıcı güncellendi (mock)');
         router.push('/users');
+        router.refresh();
       }
     } catch (error) {
       console.error('Güncelleme sırasında hata:', error);
+      
+      // Hata durumunda bile localStorage'a kaydet
+      try {
+        const newUsersStr = localStorage.getItem('newUsers');
+        const newUsers: User[] = newUsersStr ? JSON.parse(newUsersStr) : [];
+        
+        const userIndex = newUsers.findIndex((u) => u.id === parseInt(userId));
+        if (userIndex !== -1) {
+          newUsers[userIndex] = formData as User;
+        } else {
+          newUsers.push(formData as User);
+        }
+        
+        localStorage.setItem('newUsers', JSON.stringify(newUsers));
+      } catch (storageError) {
+        console.error('LocalStorage kaydetme hatası:', storageError);
+      }
+      
       alert('Kullanıcı güncellendi (mock)');
       router.push('/users');
+      router.refresh();
     }
   };
 

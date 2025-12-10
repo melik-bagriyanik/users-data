@@ -104,15 +104,36 @@ export default function UsersPage() {
       // LocalStorage'dan yeni eklenen kullanıcıları al
       try {
         const newUsersStr = localStorage.getItem('newUsers');
+        const deletedUsersStr = localStorage.getItem('deletedUsers');
+        
+        // Silinen kullanıcı ID'lerini al
+        let deletedUserIds: number[] = [];
+        if (deletedUsersStr) {
+          try {
+            deletedUserIds = JSON.parse(deletedUsersStr);
+            if (!Array.isArray(deletedUserIds)) {
+              deletedUserIds = [];
+            }
+          } catch (e) {
+            console.error('Silinen kullanıcılar parse hatası:', e);
+            deletedUserIds = [];
+          }
+        }
+        
+        // API'den gelen kullanıcılardan silinenleri çıkar
+        const filteredApiUsers = apiUsers.filter((user) => !deletedUserIds.includes(user.id));
+        
         if (newUsersStr) {
           const newUsers: User[] = JSON.parse(newUsersStr);
+          // Silinen kullanıcıları yeni eklenenlerden de çıkar
+          const filteredNewUsers = newUsers.filter((user) => !deletedUserIds.includes(user.id));
           // API'den gelen kullanıcılarla birleştir
-          const allUsers = [...apiUsers, ...newUsers];
+          const allUsers = [...filteredApiUsers, ...filteredNewUsers];
           // ID'ye göre sırala (yeni eklenenler en üstte)
           allUsers.sort((a, b) => (b.id || 0) - (a.id || 0));
           setUsers(allUsers);
         } else {
-          setUsers(apiUsers);
+          setUsers(filteredApiUsers);
         }
       } catch (storageError) {
         // LocalStorage hatası olursa sadece API verilerini kullan
@@ -151,18 +172,49 @@ export default function UsersPage() {
     const userId = e.data.id;
     
     try {
+      // Önce localStorage'dan kaldır (yeni eklenen kullanıcılar için)
+      try {
+        const newUsersStr = localStorage.getItem('newUsers');
+        if (newUsersStr) {
+          const newUsers: User[] = JSON.parse(newUsersStr);
+          const filteredUsers = newUsers.filter((user) => user.id !== userId);
+          localStorage.setItem('newUsers', JSON.stringify(filteredUsers));
+        }
+      } catch (storageError) {
+        console.error('LocalStorage silme hatası:', storageError);
+      }
+
+      // Silinen kullanıcı ID'sini localStorage'a ekle (API'den gelen kullanıcılar için)
+      try {
+        const deletedUsersStr = localStorage.getItem('deletedUsers');
+        let deletedUserIds: number[] = [];
+        if (deletedUsersStr) {
+          try {
+            deletedUserIds = JSON.parse(deletedUsersStr);
+            if (!Array.isArray(deletedUserIds)) {
+              deletedUserIds = [];
+            }
+          } catch (e) {
+            deletedUserIds = [];
+          }
+        }
+        
+        // Eğer zaten silinmiş listede yoksa ekle
+        if (!deletedUserIds.includes(userId)) {
+          deletedUserIds.push(userId);
+          localStorage.setItem('deletedUsers', JSON.stringify(deletedUserIds));
+        }
+      } catch (storageError) {
+        console.error('Silinen kullanıcılar kaydetme hatası:', storageError);
+      }
+
       // API'ye silme isteği gönder
       const response = await fetch(`https://fakestoreapi.com/users/${userId}`, {
         method: 'DELETE',
       });
 
-      if (response.ok || response.status === 200) {
-        // Başarılı olursa listeden kaldır
-        setUsers(users.filter((user) => user.id !== userId));
-      } else {
-        // API başarısız olursa sadece listeden kaldır
-        setUsers(users.filter((user) => user.id !== userId));
-      }
+      // State'ten kaldır
+      setUsers(users.filter((user) => user.id !== userId));
     } catch (error) {
       console.error('Silme işlemi sırasında hata:', error);
       // Hata durumunda da listeden kaldır
@@ -182,6 +234,46 @@ export default function UsersPage() {
     if (selectedRowKeys.length === 0) return;
 
     if (confirm(`${selectedRowKeys.length} kullanıcı silinecek. Emin misiniz?`)) {
+      // Önce localStorage'dan kaldır (yeni eklenen kullanıcılar için)
+      try {
+        const newUsersStr = localStorage.getItem('newUsers');
+        if (newUsersStr) {
+          const newUsers: User[] = JSON.parse(newUsersStr);
+          const filteredUsers = newUsers.filter((user) => !selectedRowKeys.includes(user.id));
+          localStorage.setItem('newUsers', JSON.stringify(filteredUsers));
+        }
+      } catch (storageError) {
+        console.error('LocalStorage silme hatası:', storageError);
+      }
+
+      // Silinen kullanıcı ID'lerini localStorage'a ekle (API'den gelen kullanıcılar için)
+      try {
+        const deletedUsersStr = localStorage.getItem('deletedUsers');
+        let deletedUserIds: number[] = [];
+        if (deletedUsersStr) {
+          try {
+            deletedUserIds = JSON.parse(deletedUsersStr);
+            if (!Array.isArray(deletedUserIds)) {
+              deletedUserIds = [];
+            }
+          } catch (e) {
+            deletedUserIds = [];
+          }
+        }
+        
+        // Seçili kullanıcı ID'lerini ekle (zaten listede olmayanlar)
+        selectedRowKeys.forEach((userId) => {
+          if (!deletedUserIds.includes(userId)) {
+            deletedUserIds.push(userId);
+          }
+        });
+        
+        localStorage.setItem('deletedUsers', JSON.stringify(deletedUserIds));
+      } catch (storageError) {
+        console.error('Silinen kullanıcılar kaydetme hatası:', storageError);
+      }
+
+      // State'ten kaldır
       setUsers(users.filter((user) => !selectedRowKeys.includes(user.id)));
       setSelectedRowKeys([]);
     }
