@@ -30,6 +30,7 @@ export interface OrderProduct {
   productId: number;
   quantity: number;
   product?: Product;
+  _uniqueKey?: string; // Unique key for DataGrid
 }
 
 export interface Product {
@@ -115,11 +116,21 @@ export default function OrdersPage() {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) {
             storedOrders = parsed;
-            // Stored ID'leri number'a çevir
-            storedOrders = storedOrders.map((o) => ({
-              ...o,
-              id: typeof o.id === 'number' ? o.id : parseInt(String(o.id), 10) || 0,
-            }));
+            // Stored ID'leri number'a çevir ve products için unique key oluştur
+            storedOrders = storedOrders.map((o) => {
+              const order = {
+                ...o,
+                id: typeof o.id === 'number' ? o.id : parseInt(String(o.id), 10) || 0,
+              };
+              // Products için unique key oluştur
+              if (order.products && Array.isArray(order.products)) {
+                order.products = order.products.map((p: OrderProduct, index: number) => ({
+                  ...p,
+                  _uniqueKey: p._uniqueKey || `${order.id}-${p.productId}-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                }));
+              }
+              return order;
+            });
             console.log('LocalStorage\'dan yüklendi:', storedOrders.length, 'sipariş');
           } else {
             console.warn('LocalStorage verisi array değil, temizleniyor');
@@ -206,13 +217,21 @@ export default function OrdersPage() {
       const order = orders.find((o) => o.id === selectedOrderId);
       if (order) {
         // Ürün detaylarını ekle veya mevcut product bilgisini koru
-        const productsWithDetails = (order.products || []).map((op) => {
+        const productsWithDetails = (order.products || []).map((op, index) => {
           // Eğer product zaten yüklenmişse koru, yoksa yükle
-          if (op.product) {
-            return op;
+          let productWithDetails = { ...op };
+          if (!productWithDetails.product) {
+            const product = products.find((p) => p.id === op.productId);
+            if (product) {
+              productWithDetails.product = product;
+            }
           }
-          const product = products.find((p) => p.id === op.productId);
-          return { ...op, product };
+          // Unique key oluştur (her zaman yeni oluştur, timestamp ve random ekle)
+          // Mevcut key varsa ve unique ise koru, yoksa yeni oluştur
+          if (!productWithDetails._uniqueKey) {
+            productWithDetails._uniqueKey = `${selectedOrderId}-${op.productId}-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          }
+          return productWithDetails;
         });
         setSelectedOrderProducts(productsWithDetails);
       } else {
@@ -236,6 +255,13 @@ export default function OrdersPage() {
   const handleOrderRowInserted = async (e: any) => {
     try {
       const newOrder = { ...e.data };
+      
+      // ID kontrolü - aynı ID'ye sahip sipariş var mı?
+      const existingOrder = orders.find((o) => o.id === newOrder.id);
+      if (existingOrder && newOrder.id) {
+        alert(`ID ${newOrder.id} zaten kullanılıyor! Lütfen farklı bir ID kullanın.`);
+        return;
+      }
       
       // ID'yi otomatik oluştur (en yüksek ID + 1)
       const maxId = getMaxOrderId();
@@ -322,6 +348,23 @@ export default function OrdersPage() {
       const updatedOrder = e.data;
       updatedOrder.id = Number(updatedOrder.id);
       
+      // ID kontrolü - aynı ID'ye sahip başka sipariş var mı?
+      // Eğer ID değiştirilmişse ve başka bir siparişte aynı ID varsa hata
+      const ordersWithSameId = orders.filter((o) => o.id === updatedOrder.id);
+      if (ordersWithSameId.length > 0) {
+        // Eğer güncellenen sipariş zaten listede varsa ve ID değişmemişse sorun yok
+        // Ama eğer ID değiştirilmişse ve başka bir siparişte aynı ID varsa hata
+        const isCurrentOrder = ordersWithSameId.some((o) => {
+          // Basit kontrol: eğer tüm özellikler aynıysa bu mevcut sipariş
+          return o.userId === updatedOrder.userId && 
+                 o.date === updatedOrder.date;
+        });
+        if (!isCurrentOrder && ordersWithSameId.length > 0) {
+          alert(`ID ${updatedOrder.id} zaten kullanılıyor! Lütfen farklı bir ID kullanın.`);
+          return;
+        }
+      }
+      
       // LocalStorage'ı güncelle
       try {
         const stored = localStorage.getItem('newOrders');
@@ -395,6 +438,17 @@ export default function OrdersPage() {
       const newProduct = e.data;
       const order = orders.find((o) => o.id === selectedOrderId);
       if (order) {
+        // Aynı productId'ye sahip ürün var mı kontrol et
+        if (newProduct.productId) {
+          const existingProduct = (order.products || []).find(
+            (p) => p.productId === newProduct.productId
+          );
+          if (existingProduct) {
+            alert(`Bu siparişte zaten productId ${newProduct.productId} bulunuyor! Lütfen farklı bir ürün ekleyin.`);
+            return;
+          }
+        }
+        
         // Ürün bilgilerini yükle (productId varsa)
         let productWithDetails = { ...newProduct };
         if (newProduct.productId && products.length > 0) {
@@ -403,6 +457,10 @@ export default function OrdersPage() {
             productWithDetails.product = product;
           }
         }
+        
+        // Unique key oluştur (timestamp ve random ekle)
+        const productCount = (order.products || []).length;
+        productWithDetails._uniqueKey = `${selectedOrderId}-${newProduct.productId}-${productCount}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         
         const updatedProducts = [...(order.products || []), productWithDetails];
         const updatedOrder = { ...order, products: updatedProducts };
@@ -464,6 +522,21 @@ export default function OrdersPage() {
       const updatedProduct = e.data;
       const order = orders.find((o) => o.id === selectedOrderId);
       if (order) {
+        // ProductId değiştiyse, aynı productId'ye sahip başka ürün var mı kontrol et
+        const currentProduct = (order.products || []).find(
+          (p) => p._uniqueKey === updatedProduct._uniqueKey
+        );
+        if (currentProduct && updatedProduct.productId && 
+            currentProduct.productId !== updatedProduct.productId) {
+          const existingProduct = (order.products || []).find(
+            (p) => p.productId === updatedProduct.productId && p._uniqueKey !== updatedProduct._uniqueKey
+          );
+          if (existingProduct) {
+            alert(`Bu siparişte zaten productId ${updatedProduct.productId} bulunuyor! Lütfen farklı bir ürün ID kullanın.`);
+            return;
+          }
+        }
+        
         // Ürün bilgilerini yükle (productId değiştiyse)
         let productWithDetails = { ...updatedProduct };
         if (updatedProduct.productId && products.length > 0) {
@@ -476,8 +549,20 @@ export default function OrdersPage() {
           productWithDetails.product = updatedProduct.product;
         }
         
+        // Unique key'i koru veya oluştur
+        if (!productWithDetails._uniqueKey) {
+          const index = (order.products || []).findIndex(
+            (p) => p._uniqueKey === updatedProduct._uniqueKey
+          );
+          productWithDetails._uniqueKey = updatedProduct._uniqueKey || 
+            `${selectedOrderId}-${updatedProduct.productId}-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        } else {
+          // Mevcut key'i koru
+          productWithDetails._uniqueKey = updatedProduct._uniqueKey;
+        }
+        
         const updatedProducts = (order.products || []).map((p) =>
-          p.productId === updatedProduct.productId ? productWithDetails : p
+          p._uniqueKey === updatedProduct._uniqueKey ? productWithDetails : p
         );
         const updatedOrder = { ...order, products: updatedProducts };
         
@@ -538,8 +623,9 @@ export default function OrdersPage() {
       const removedProduct = e.data;
       const order = orders.find((o) => o.id === selectedOrderId);
       if (order) {
+        // Unique key'e göre sil
         const updatedProducts = (order.products || []).filter(
-          (p) => p.productId !== removedProduct.productId
+          (p) => p._uniqueKey !== removedProduct._uniqueKey
         );
         const updatedOrder = { ...order, products: updatedProducts };
         
@@ -764,54 +850,41 @@ export default function OrdersPage() {
           <div className="rounded-lg bg-white p-6 shadow">
             {selectedOrderId ? (
               <>
-                <div className="mb-4 flex items-center justify-between">
-                  <div>
-                    <h2 className="text-xl font-semibold text-gray-800">
-                      Sipariş Ürünleri
-                    </h2>
-                    <p className="mt-1 text-sm text-gray-600">
-                      Sipariş ID: {selectedOrderId}
-                    </p>
-                  </div>
-                  <Button
-                    text="Yeni Ürün Ekle"
-                    type="default"
-                    stylingMode="contained"
-                    onClick={() => {
-                      if (productGridRef.current && productGridRef.current.instance) {
-                        productGridRef.current.instance.addRow();
-                      }
-                    }}
-                  />
+                <div className="mb-4">
+                  <h2 className="text-xl font-semibold text-gray-800">
+                    Sipariş Ürünleri
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-600">
+                    Sipariş ID: {selectedOrderId}
+                  </p>
                 </div>
                 <DataGrid
                   ref={productGridRef}
                   dataSource={selectedOrderProducts}
-                  keyExpr="productId"
+                  keyExpr="_uniqueKey"
                   showBorders={true}
                   height="600px"
                   onRowInserted={handleProductRowInserted}
                   onRowUpdated={handleProductRowUpdated}
                   onRowRemoved={handleProductRowRemoved}
                 >
-                  <Scrolling mode="virtual" />
+                  <Scrolling mode="none" />
                   <Paging enabled={true} pageSize={10} />
                   <Editing
                     mode="row"
                     allowAdding={true}
                     allowDeleting={true}
                     allowUpdating={true}
+                    useIcons={true}
                   />
                   <Toolbar>
                     <GridItem name="addRowButton" />
-                    <GridItem name="saveButton" />
-                    <GridItem name="cancelButton" />
                   </Toolbar>
 
                   <Column
                     dataField="productId"
                     caption="Ürün ID"
-                    width={100}
+                    width={70}
                     dataType="number"
                     editorOptions={{ 
                       valueType: 'number'
@@ -820,7 +893,7 @@ export default function OrdersPage() {
                   <Column
                     dataField="quantity"
                     caption="Miktar"
-                    width={100}
+                    width={70}
                     dataType="number"
                     editorOptions={{ 
                       valueType: 'number',
@@ -830,8 +903,9 @@ export default function OrdersPage() {
                   <Column
                     dataField="product.title"
                     caption="Ürün Adı"
-                    width={200}
+                    width="*"
                     allowEditing={false}
+                    wordWrapEnabled={true}
                     calculateCellValue={(rowData: OrderProduct) =>
                       rowData.product?.title || '-'
                     }
@@ -839,7 +913,7 @@ export default function OrdersPage() {
                   <Column
                     dataField="product.price"
                     caption="Fiyat"
-                    width={100}
+                    width={80}
                     allowEditing={false}
                     format="currency"
                     calculateCellValue={(rowData: OrderProduct) =>
@@ -847,21 +921,65 @@ export default function OrdersPage() {
                     }
                   />
                   <Column
+                    dataField="product.image"
+                    caption="Fotoğraf"
+                    width={80}
+                    allowEditing={false}
+                    cellRender={(data: any) => {
+                      const product = data.data.product;
+                      if (product?.image) {
+                        return (
+                          <div className="flex items-center justify-center p-1">
+                            <img
+                              src={product.image}
+                              alt={product.title || 'Ürün'}
+                              className="h-10 w-10 cursor-pointer rounded border border-gray-200 object-cover shadow-sm transition-transform hover:scale-110"
+                              onClick={() => handleShowImage(product.image)}
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="40" height="40"%3E%3Crect fill="%23e5e7eb" width="40" height="40"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%239ca3af" font-size="8"%3EYok%3C/text%3E%3C/svg%3E';
+                              }}
+                            />
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="flex items-center justify-center p-1">
+                          <Button
+                            text="Foto"
+                            stylingMode="outlined"
+                            icon="image"
+                            width={70}
+                            onClick={() => {
+                              const product = data.data.product;
+                              if (product?.image) {
+                                handleShowImage(product.image);
+                              } else {
+                                alert('Bu ürün için fotoğraf bulunamadı. Lütfen geçerli bir Ürün ID girin.');
+                              }
+                            }}
+                          />
+                        </div>
+                      );
+                    }}
+                  />
+                  <Column
                     type="buttons"
                     width={120}
                     buttons={[
                       {
-                        hint: 'Fotoğraf Göster',
-                        icon: 'image',
+                        hint: 'Düzenle',
+                        icon: 'edit',
                         onClick: (e: any) => {
-                          const product = e.row.data.product;
-                          if (product?.image) {
-                            handleShowImage(product.image);
+                          // Düzenleme modunu aç
+                          if (productGridRef.current && productGridRef.current.instance) {
+                            productGridRef.current.instance.editRow(e.row.key);
                           }
                         },
                       },
-                      'edit',
                       'delete',
+                      'save',
+                      'cancel',
                     ]}
                   />
                 </DataGrid>
