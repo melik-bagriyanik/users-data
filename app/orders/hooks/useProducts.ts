@@ -1,13 +1,12 @@
 import { useState, useCallback } from 'react';
-import type { Product, OrderProduct, Order } from '../types';
+import type { OrderProduct, Order } from '../types';
 
 export function useProducts() {
-  const [products, setProducts] = useState<Product[]>([]);
   const [selectedOrderProducts, setSelectedOrderProducts] = useState<OrderProduct[]>([]);
 
   const getMaxProductId = useCallback((
     orders: Order[],
-    products: Product[]
+    products: any[]
   ): number => {
     const allProductIds: number[] = [];
     
@@ -54,8 +53,6 @@ export function useProducts() {
   }, []);
 
   return {
-    products,
-    setProducts,
     selectedOrderProducts,
     setSelectedOrderProducts,
     getMaxProductId,
