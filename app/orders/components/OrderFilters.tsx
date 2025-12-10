@@ -63,7 +63,6 @@ export default function OrderFilters({
             placeholder="Başlangıç Tarihi Seçin"
             displayFormat="dd/MM/yyyy"
             max={endDate || undefined}
-            validationMessage="Başlangıç tarihi bitiş tarihinden sonra olamaz"
           />
         </div>
         <div>
@@ -83,7 +82,6 @@ export default function OrderFilters({
             placeholder="Bitiş Tarihi Seçin"
             displayFormat="dd/MM/yyyy"
             min={startDate || undefined}
-            validationMessage="Bitiş tarihi başlangıç tarihinden önce olamaz"
           />
         </div>
         <div>

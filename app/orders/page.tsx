@@ -1340,8 +1340,8 @@ export default function OrdersPage() {
                 width={90}
                 dataType="number"
                 allowEditing={true}
-                editorType="dxNumberBox"
                 editorOptions={{
+                  editorType: 'dxNumberBox',
                   min: 1,
                   showSpinButtons: true,
                 }}
