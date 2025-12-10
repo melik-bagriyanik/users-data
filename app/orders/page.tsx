@@ -193,8 +193,18 @@ export default function OrdersPage() {
     
     if (startDate || endDate) {
       const orderDate = new Date(order.date);
-      if (startDate && orderDate < startDate) return false;
-      if (endDate && orderDate > endDate) return false;
+      // Tarihleri sadece tarih kısmına göre karşılaştır (saat bilgisini sıfırla)
+      const orderDateOnly = new Date(orderDate.getFullYear(), orderDate.getMonth(), orderDate.getDate());
+      
+      if (startDate) {
+        const startDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+        if (orderDateOnly < startDateOnly) return false;
+      }
+      
+      if (endDate) {
+        const endDateOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+        if (orderDateOnly > endDateOnly) return false;
+      }
     }
     
     return true;
@@ -1211,17 +1221,20 @@ export default function OrdersPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="text-lg">Yükleniyor...</div>
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 page-enter">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-12 w-12 rounded-full border-4 border-gray-200 border-t-blue-600 loading-spinner"></div>
+          <p className="text-gray-600 text-lg font-medium loading-text">Siparişler yükleniyor...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <div className="min-h-screen bg-gray-50 p-8 page-enter">
       <div className="mx-auto max-w-7xl">
         {/* Header */}
-        <div className="mb-6 flex items-center justify-between rounded-lg bg-white p-6 shadow">
+        <div className="mb-6 flex items-center justify-between rounded-lg bg-white p-6 shadow card-hover">
           <h1 className="text-2xl font-bold text-gray-800">Siparişler</h1>
           <Button
             text="Kullanıcı Listesi"
@@ -1288,7 +1301,14 @@ export default function OrdersPage() {
                 }}
               />
               <Toolbar>
-                <GridItem name="addRowButton" />
+                <GridItem 
+                  name="addRowButton" 
+                  options={{ 
+                    text: 'Yeni Sipariş Ekle',
+                    hint: 'Yeni Sipariş Ekle',
+                    stylingMode: 'contained'
+                  }} 
+                />
                 <GridItem 
                   name="saveButton" 
                   options={{ 

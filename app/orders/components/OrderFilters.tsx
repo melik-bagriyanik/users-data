@@ -52,9 +52,18 @@ export default function OrderFilters({
           </label>
           <DateBox
             value={startDate}
-            onValueChanged={(e) => onStartDateChange(e.value)}
+            onValueChanged={(e) => {
+              const newStartDate = e.value;
+              // Eğer bitiş tarihi varsa ve yeni başlangıç tarihi bitiş tarihinden sonraysa, bitiş tarihini sıfırla
+              if (newStartDate && endDate && newStartDate > endDate) {
+                onEndDateChange(null);
+              }
+              onStartDateChange(newStartDate);
+            }}
             placeholder="Başlangıç Tarihi Seçin"
             displayFormat="dd/MM/yyyy"
+            max={endDate || undefined}
+            validationMessage="Başlangıç tarihi bitiş tarihinden sonra olamaz"
           />
         </div>
         <div>
@@ -63,9 +72,18 @@ export default function OrderFilters({
           </label>
           <DateBox
             value={endDate}
-            onValueChanged={(e) => onEndDateChange(e.value)}
+            onValueChanged={(e) => {
+              const newEndDate = e.value;
+              // Eğer başlangıç tarihi varsa ve yeni bitiş tarihi başlangıç tarihinden önceyse, başlangıç tarihini sıfırla
+              if (newEndDate && startDate && newEndDate < startDate) {
+                onStartDateChange(null);
+              }
+              onEndDateChange(newEndDate);
+            }}
             placeholder="Bitiş Tarihi Seçin"
             displayFormat="dd/MM/yyyy"
+            min={startDate || undefined}
+            validationMessage="Bitiş tarihi başlangıç tarihinden önce olamaz"
           />
         </div>
         <div>
@@ -79,6 +97,7 @@ export default function OrderFilters({
             displayExpr="text"
             valueExpr="value"
             placeholder="Kullanıcı Seçin"
+            showDropDownButton={false}
           />
         </div>
       </div>

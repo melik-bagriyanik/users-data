@@ -227,10 +227,10 @@ export default function EditUserPage() {
 
   if (loading || !user || !formData || !formData.id) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 page-enter">
         <div className="flex flex-col items-center gap-4">
-          <div className="h-12 w-12 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600"></div>
-          <p className="text-gray-600">Kullanıcı bilgileri yükleniyor...</p>
+          <div className="h-12 w-12 rounded-full border-4 border-gray-200 border-t-blue-600 loading-spinner"></div>
+          <p className="text-gray-600 text-lg font-medium loading-text">Kullanıcı bilgileri yükleniyor...</p>
         </div>
       </div>
     );
