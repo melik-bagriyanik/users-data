@@ -5,7 +5,7 @@ import { useRouter, useParams } from 'next/navigation';
 import Form, { Item, Label, ButtonItem, GroupItem } from 'devextreme-react/form';
 import Button from 'devextreme-react/button';
 import { getAuthCookie } from '@/lib/cookies';
-import type { User } from '../page';
+import type { User } from '../../types';
 
 const getMockUser = (id: number): User => {
   return {
@@ -106,20 +106,38 @@ export default function EditUserPage() {
   const handleFieldDataChanged = useCallback((e: any) => {
     if (!e.dataField) return;
     
-    setFormData((prevFormData) => {
+    setFormData((prevFormData: Partial<User> | null) => {
       if (!prevFormData) return prevFormData;
       
       const newFormData = { ...prevFormData };
       if (e.dataField.startsWith('name.')) {
         const field = e.dataField.split('.')[1];
-        if (!newFormData.name) newFormData.name = {};
-        newFormData.name[field] = e.value;
+        if (!newFormData.name) {
+          newFormData.name = { firstname: '', lastname: '' };
+        }
+        (newFormData.name as any)[field] = e.value;
       } else if (e.dataField.startsWith('address.')) {
         const field = e.dataField.split('.')[1];
-        if (!newFormData.address) newFormData.address = {};
-        newFormData.address[field] = e.value;
+        if (!newFormData.address) {
+          newFormData.address = {
+            city: '',
+            street: '',
+            number: 0,
+            zipcode: '',
+            geolocation: { lat: '', long: '' },
+          };
+        }
+        if (field === 'geolocation.lat' || field === 'geolocation.long') {
+          const geoField = field.split('.')[1];
+          if (!newFormData.address.geolocation) {
+            newFormData.address.geolocation = { lat: '', long: '' };
+          }
+          (newFormData.address.geolocation as any)[geoField] = e.value;
+        } else {
+          (newFormData.address as any)[field] = e.value;
+        }
       } else {
-        newFormData[e.dataField] = e.value;
+        (newFormData as any)[e.dataField] = e.value;
       }
       return newFormData;
     });

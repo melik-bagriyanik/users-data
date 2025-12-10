@@ -57,15 +57,22 @@ export default function Home() {
             Ana Sayfa
           </h2>
           <p className="mb-4 text-gray-600">
-            Kullanıcı yönetimi için aşağıdaki butona tıklayarak kullanıcı listesine
-            gidebilirsiniz.
+            Sistem özelliklerine aşağıdaki butonlardan erişebilirsiniz.
           </p>
-          <Button
-            text="Kullanıcı Listesine Git"
-            type="default"
-            stylingMode="contained"
-            onClick={() => router.push('/users')}
-          />
+          <div className="flex gap-3">
+            <Button
+              text="Kullanıcı Listesi"
+              type="default"
+              stylingMode="contained"
+              onClick={() => router.push('/users')}
+            />
+            <Button
+              text="Siparişler"
+              type="default"
+              stylingMode="contained"
+              onClick={() => router.push('/orders')}
+            />
+          </div>
         </div>
       </div>
     </div>

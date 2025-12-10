@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Form, { Item, Label, ButtonItem, GroupItem } from 'devextreme-react/form';
 import Button from 'devextreme-react/button';
 import { getAuthCookie } from '@/lib/cookies';
-import type { User } from '../page';
+import type { User } from '../types';
 
 export default function NewUserPage() {
   const router = useRouter();

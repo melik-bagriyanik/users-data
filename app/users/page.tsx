@@ -12,28 +12,7 @@ import DataGrid, {
 } from 'devextreme-react/data-grid';
 import Button from 'devextreme-react/button';
 import { getAuthCookie, removeAuthCookie } from '@/lib/cookies';
-
-export interface User {
-  id: number;
-  email: string;
-  username: string;
-  password?: string;
-  name: {
-    firstname: string;
-    lastname: string;
-  };
-  address?: {
-    city: string;
-    street: string;
-    number: number;
-    zipcode: string;
-    geolocation: {
-      lat: string;
-      long: string;
-    };
-  };
-  phone?: string;
-}
+import type { User } from './types';
 
 export default function UsersPage() {
   const router = useRouter();
@@ -226,6 +205,12 @@ export default function UsersPage() {
               type="default"
               stylingMode="contained"
               onClick={() => router.push('/users/new')}
+            />
+            <Button
+              text="Siparişler"
+              type="default"
+              stylingMode="outlined"
+              onClick={() => router.push('/orders')}
             />
             <Button
               text="Çıkış Yap"

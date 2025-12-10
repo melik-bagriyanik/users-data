@@ -35,3 +35,4 @@ export const isAuthenticated = (): boolean => {
   return getAuthCookie() !== null;
 };
 
+

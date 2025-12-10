@@ -64,8 +64,8 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit}>
           <Form
             formData={formData}
-            onFieldDataChanged={(e) => {
-              if (e.dataField) {
+            onFieldDataChanged={(e: any) => {
+              if (e.dataField && typeof e.dataField === 'string') {
                 setFormData((prev) => ({
                   ...prev,
                   [e.dataField]: e.value,
@@ -107,4 +107,5 @@ export default function LoginPage() {
     </div>
   );
 }
+
 
