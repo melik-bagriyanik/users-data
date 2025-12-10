@@ -14,73 +14,7 @@ import Button from 'devextreme-react/button';
 import { getAuthCookie, removeAuthCookie } from '@/lib/cookies';
 import type { User } from './types';
 
-export default function UsersPage() {
-  const router = useRouter();
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
-
-  const fetchUsers = useCallback(async () => {
-    try {
-      setLoading(true);
-      // FakeStoreAPI'den kullanıcıları çek
-      const response = await fetch('https://fakestoreapi.com/users');
-      let apiUsers: User[] = [];
-      
-      if (response.ok) {
-        apiUsers = await response.json();
-      } else {
-        // API başarısız olursa örnek veri kullan
-        apiUsers = getMockUsers();
-      }
-      
-      // LocalStorage'dan yeni eklenen kullanıcıları al
-      try {
-        const newUsersStr = localStorage.getItem('newUsers');
-        if (newUsersStr) {
-          const newUsers: User[] = JSON.parse(newUsersStr);
-          // API'den gelen kullanıcılarla birleştir
-          const allUsers = [...apiUsers, ...newUsers];
-          // ID'ye göre sırala (yeni eklenenler en üstte)
-          allUsers.sort((a, b) => (b.id || 0) - (a.id || 0));
-          setUsers(allUsers);
-        } else {
-          setUsers(apiUsers);
-        }
-      } catch (storageError) {
-        // LocalStorage hatası olursa sadece API verilerini kullan
-        setUsers(apiUsers);
-      }
-    } catch (error) {
-      console.error('Kullanıcılar yüklenirken hata:', error);
-      // Hata durumunda örnek veri kullan
-      setUsers(getMockUsers());
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const authData = getAuthCookie();
-    if (!authData) {
-      router.push('/login');
-      return;
-    }
-    fetchUsers();
-    
-    // Sayfa focus olduğunda verileri yenile
-    const handleFocus = () => {
-      fetchUsers();
-    };
-    
-    window.addEventListener('focus', handleFocus);
-    
-    return () => {
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, [router, fetchUsers]);
-
-  const getMockUsers = (): User[] => {
+const getMockUsers = (): User[] => {
     return [
       {
         id: 1,
@@ -128,7 +62,90 @@ export default function UsersPage() {
         phone: '1-567-094-1345',
       },
     ];
-  };
+};
+
+export default function UsersPage() {
+  const router = useRouter();
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
+
+  const fetchUsers = useCallback(async () => {
+    try {
+      setLoading(true);
+      // FakeStoreAPI'den kullanıcıları çek (timeout ile)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 saniye timeout
+      
+      let apiUsers: User[] = [];
+      try {
+        const response = await fetch('https://fakestoreapi.com/users', {
+          signal: controller.signal,
+        });
+        
+        if (response.ok) {
+          apiUsers = await response.json();
+        } else {
+          // API başarısız olursa örnek veri kullan
+          apiUsers = getMockUsers();
+        }
+      } catch (fetchError: any) {
+        if (fetchError.name === 'AbortError') {
+          console.warn('API çağrısı zaman aşımına uğradı, mock veri kullanılıyor');
+        } else {
+          console.error('API çağrısı hatası:', fetchError);
+        }
+        // Hata durumunda örnek veri kullan
+        apiUsers = getMockUsers();
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      
+      // LocalStorage'dan yeni eklenen kullanıcıları al
+      try {
+        const newUsersStr = localStorage.getItem('newUsers');
+        if (newUsersStr) {
+          const newUsers: User[] = JSON.parse(newUsersStr);
+          // API'den gelen kullanıcılarla birleştir
+          const allUsers = [...apiUsers, ...newUsers];
+          // ID'ye göre sırala (yeni eklenenler en üstte)
+          allUsers.sort((a, b) => (b.id || 0) - (a.id || 0));
+          setUsers(allUsers);
+        } else {
+          setUsers(apiUsers);
+        }
+      } catch (storageError) {
+        // LocalStorage hatası olursa sadece API verilerini kullan
+        setUsers(apiUsers);
+      }
+    } catch (error) {
+      console.error('Kullanıcılar yüklenirken hata:', error);
+      // Hata durumunda örnek veri kullan
+      setUsers(getMockUsers());
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const authData = getAuthCookie();
+    if (!authData) {
+      router.push('/login');
+      return;
+    }
+    fetchUsers();
+    
+    // Sayfa focus olduğunda verileri yenile
+    const handleFocus = () => {
+      fetchUsers();
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [router, fetchUsers]);
 
   const handleDelete = async (e: any) => {
     const userId = e.data.id;
@@ -180,8 +197,11 @@ export default function UsersPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="text-lg">Yükleniyor...</div>
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-12 w-12 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600"></div>
+          <p className="text-gray-600">Kullanıcılar yükleniyor...</p>
+        </div>
       </div>
     );
   }
@@ -225,12 +245,19 @@ export default function UsersPage() {
         <div className="rounded-lg bg-white p-6 shadow">
           <div className="mb-4 flex items-center justify-between">
             {selectedRowKeys.length > 0 && (
-              <Button
-                text={`Seçili ${selectedRowKeys.length} Kaydı Sil`}
-                type="danger"
-                stylingMode="contained"
-                onClick={handleSelectedDelete}
-              />
+              <div className="flex items-center gap-3">
+                <Button
+                  text={`Seçili ${selectedRowKeys.length} Kaydı Sil`}
+                  type="danger"
+                  stylingMode="contained"
+                  onClick={handleSelectedDelete}
+                />
+                <Button
+                  text="Vazgeç"
+                  stylingMode="outlined"
+                  onClick={() => setSelectedRowKeys([])}
+                />
+              </div>
             )}
           </div>
 
@@ -255,8 +282,8 @@ export default function UsersPage() {
             />
             <Toolbar>
               <Item name="addRowButton" />
-              <Item name="saveButton" />
-              <Item name="cancelButton" />
+              <Item name="saveButton" options={{ icon: 'save' }} />
+              <Item name="cancelButton" options={{ icon: 'close' }} />
             </Toolbar>
 
             <Column

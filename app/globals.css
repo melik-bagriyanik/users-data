@@ -1,6 +1,12 @@
 @import "tailwindcss";
 @import "devextreme/dist/css/dx.light.css";
 
+/* Toolbar butonlarında sadece ikon göster (save ve cancel butonları için) */
+.dx-toolbar .dx-toolbar-button .dx-button-text,
+.dx-toolbar .dx-toolbar-item .dx-button-text {
+  display: none !important;
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;

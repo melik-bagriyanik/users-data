@@ -34,6 +34,7 @@ export interface OrderProduct {
   _uniqueKey?: string; // Unique key for DataGrid
   title?: string; // Ürün adı override için
   price?: number; // Fiyat override için
+  image?: string; // Ürün fotoğrafı (base64 veya URL)
 }
 
 export interface Product {
@@ -96,6 +97,52 @@ export default function OrdersPage() {
     
     return ids.length > 0 ? Math.max(...ids) : 0;
   }, [orders]);
+
+  // Helper: Tüm ürünlerden en yüksek productId'yi bul
+  const getMaxProductId = useCallback((): number => {
+    const allProductIds: number[] = [];
+    
+    // API'den gelen ürünlerden
+    products.forEach((p) => {
+      if (p.id && typeof p.id === 'number' && p.id > 0) {
+        allProductIds.push(p.id);
+      }
+    });
+    
+    // Tüm siparişlerdeki ürünlerden
+    orders.forEach((order) => {
+      if (order.products && Array.isArray(order.products)) {
+        order.products.forEach((op) => {
+          if (op.productId && typeof op.productId === 'number' && op.productId > 0) {
+            allProductIds.push(op.productId);
+          }
+        });
+      }
+    });
+    
+    // LocalStorage'dan da kontrol et
+    try {
+      const stored = localStorage.getItem('newOrders');
+      if (stored) {
+        const storedOrders: Order[] = JSON.parse(stored);
+        storedOrders.forEach((order) => {
+          if (order.products && Array.isArray(order.products)) {
+            order.products.forEach((op) => {
+              if (op.productId && typeof op.productId === 'number' && op.productId > 0) {
+                allProductIds.push(op.productId);
+              }
+            });
+          }
+        });
+      }
+    } catch (e) {
+      console.error('LocalStorage okuma hatası:', e);
+    }
+    
+    if (allProductIds.length === 0) return 0;
+    
+    return Math.max(...allProductIds);
+  }, [orders, products]);
 
   const fetchOrders = useCallback(async () => {
     try {
@@ -517,14 +564,24 @@ export default function OrdersPage() {
       const newProduct = e.data;
       const order = orders.find((o) => o.id === selectedOrderId);
       if (order) {
+        // Eğer productId yoksa veya 0 ise, otomatik ID oluştur
+        if (!newProduct.productId || newProduct.productId === 0) {
+          const maxProductId = getMaxProductId();
+          newProduct.productId = maxProductId + 1;
+        }
+        
         // Aynı productId'ye sahip ürün var mı kontrol et
         if (newProduct.productId) {
           const existingProduct = (order.products || []).find(
             (p) => p.productId === newProduct.productId
           );
           if (existingProduct) {
-            alert(`Bu siparişte zaten productId ${newProduct.productId} bulunuyor! Lütfen farklı bir ürün ekleyin.`);
-            return;
+            // Eğer duplicate varsa, bir sonraki boş ID'yi bul
+            let nextId = newProduct.productId + 1;
+            while ((order.products || []).some((p) => p.productId === nextId)) {
+              nextId++;
+            }
+            newProduct.productId = nextId;
           }
         }
         
@@ -889,6 +946,99 @@ export default function OrdersPage() {
     setModalVisible(true);
   };
 
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, rowData: OrderProduct) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Dosya tipini kontrol et
+    if (!file.type.startsWith('image/')) {
+      alert('Lütfen bir resim dosyası seçin!');
+      return;
+    }
+
+    // Dosya boyutunu kontrol et (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Dosya boyutu 5MB\'dan küçük olmalıdır!');
+      return;
+    }
+
+    try {
+      // Dosyayı base64'e çevir
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64Image = event.target?.result as string;
+        
+        // Ürünün image'ini güncelle
+        if (!rowData.product) {
+          rowData.product = {} as Product;
+        }
+        rowData.image = base64Image;
+        rowData.product.image = base64Image;
+
+        // State'i güncelle
+        const order = orders.find((o) => o.id === selectedOrderId);
+        if (order) {
+          const updatedProducts = order.products.map((p) =>
+            p._uniqueKey === rowData._uniqueKey ? rowData : p
+          );
+          const updatedOrder = { ...order, products: updatedProducts };
+          
+          // LocalStorage'ı güncelle
+          try {
+            const stored = localStorage.getItem('newOrders');
+            let storedOrders: Order[] = [];
+            
+            if (stored) {
+              try {
+                storedOrders = JSON.parse(stored);
+                if (!Array.isArray(storedOrders)) {
+                  storedOrders = [];
+                }
+              } catch (parseError) {
+                console.error('LocalStorage parse hatası:', parseError);
+                storedOrders = [];
+              }
+            }
+            
+            const index = storedOrders.findIndex((o) => o.id === selectedOrderId);
+            if (index >= 0) {
+              storedOrders[index] = updatedOrder;
+            } else {
+              storedOrders.push(updatedOrder);
+            }
+            
+            localStorage.setItem('newOrders', JSON.stringify(storedOrders));
+          } catch (storageError) {
+            console.error('LocalStorage güncelleme hatası:', storageError);
+          }
+          
+          const updatedOrders = orders.map((o) => (o.id === selectedOrderId ? updatedOrder : o));
+          setOrders(updatedOrders);
+          
+          // selectedOrderProducts state'ini de güncelle
+          const updatedSelectedProducts = updatedProducts.map((op, index) => {
+            let productWithDetails = { ...op };
+            if (!productWithDetails.product && op.productId) {
+              const product = products.find((p) => p.id === op.productId);
+              if (product) {
+                productWithDetails.product = product;
+              }
+            }
+            if (!productWithDetails._uniqueKey) {
+              productWithDetails._uniqueKey = `${selectedOrderId}-${op.productId}-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            }
+            return productWithDetails;
+          });
+          setSelectedOrderProducts(updatedSelectedProducts);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (error) {
+      console.error('Fotoğraf yüklenirken hata:', error);
+      alert('Fotoğraf yüklenirken bir hata oluştu!');
+    }
+  };
+
   const handleClearFilters = () => {
     setStartDate(null);
     setEndDate(null);
@@ -989,6 +1139,13 @@ export default function OrdersPage() {
               onRowInserted={handleOrderRowInserted}
               onRowUpdated={handleOrderRowUpdated}
               onRowRemoved={handleOrderRowRemoved}
+              onRowRemoving={(e: any) => {
+                // Confirmation dialog göster
+                const confirmed = window.confirm('Bu siparişi silmek istediğinizden emin misiniz?');
+                if (!confirmed) {
+                  e.cancel = true;
+                }
+              }}
               onRowClick={(e: any) => {
                 // Satıra tıklandığında seç
                 if (e.data && e.data.id) {
@@ -1004,11 +1161,32 @@ export default function OrdersPage() {
                 allowAdding={true}
                 allowDeleting={true}
                 allowUpdating={true}
+                useIcons={true}
+                confirmDelete={true}
+                texts={{
+                  confirmDeleteMessage: 'Bu siparişi silmek istediğinizden emin misiniz?',
+                  yes: 'Evet',
+                  no: 'Hayır',
+                }}
               />
               <Toolbar>
                 <GridItem name="addRowButton" />
-                <GridItem name="saveButton" options={{ icon: 'save' }} />
-                <GridItem name="cancelButton" options={{ icon: 'close' }} />
+                <GridItem 
+                  name="saveButton" 
+                  options={{ 
+                    icon: 'save', 
+                    hint: 'Kaydet',
+                    stylingMode: 'text'
+                  }} 
+                />
+                <GridItem 
+                  name="cancelButton" 
+                  options={{ 
+                    icon: 'close', 
+                    hint: 'İptal',
+                    stylingMode: 'text'
+                  }} 
+                />
               </Toolbar>
 
               <Column 
@@ -1089,6 +1267,13 @@ export default function OrdersPage() {
                   onRowInserted={handleProductRowInserted}
                   onRowUpdated={handleProductRowUpdated}
                   onRowRemoved={handleProductRowRemoved}
+                  onRowRemoving={(e: any) => {
+                    // Confirmation dialog göster
+                    const confirmed = window.confirm('Bu ürünü silmek istediğinizden emin misiniz?');
+                    if (!confirmed) {
+                      e.cancel = true;
+                    }
+                  }}
                   onSaving={async (e: any) => {
                     // Satır kaydedilmeden önce güncelleme yap
                     if (!selectedOrderId) {
@@ -1150,11 +1335,31 @@ export default function OrdersPage() {
                     allowDeleting={true}
                     allowUpdating={true}
                     useIcons={true}
+                    confirmDelete={true}
+                    texts={{
+                      confirmDeleteMessage: 'Bu ürünü silmek istediğinizden emin misiniz?',
+                      yes: 'Evet',
+                      no: 'Hayır',
+                    }}
                   />
                   <Toolbar>
                     <GridItem name="addRowButton" />
-                    <GridItem name="saveButton" options={{ icon: 'save' }} />
-                    <GridItem name="cancelButton" options={{ icon: 'close' }} />
+                    <GridItem 
+                      name="saveButton" 
+                      options={{ 
+                        icon: 'save', 
+                        hint: 'Kaydet',
+                        stylingMode: 'text'
+                      }} 
+                    />
+                    <GridItem 
+                      name="cancelButton" 
+                      options={{ 
+                        icon: 'close', 
+                        hint: 'İptal',
+                        stylingMode: 'text'
+                      }} 
+                    />
                   </Toolbar>
 
                   <Column
@@ -1171,7 +1376,16 @@ export default function OrdersPage() {
                     dataType="number"
                     editorOptions={{ 
                       valueType: 'number',
-                      min: 1 
+                      min: 1,
+                      step: 1,
+                      format: '#',
+                      useSpinButtons: true
+                    }}
+                    setCellValue={(rowData: OrderProduct, value: any) => {
+                      const numValue = Number(value);
+                      if (!isNaN(numValue) && numValue > 0) {
+                        rowData.quantity = Math.floor(numValue);
+                      }
                     }}
                   />
                   <Column
@@ -1181,9 +1395,22 @@ export default function OrdersPage() {
                     setCellValue={(rowData: OrderProduct, value: any) => {
                       rowData.title = value;
                     }}
-                    calculateCellValue={(rowData: OrderProduct) =>
-                      rowData.title || rowData.product?.title || '-'
-                    }
+                    calculateCellValue={(rowData: OrderProduct) => {
+                      if (rowData.title && rowData.title.trim() !== '') {
+                        return rowData.title;
+                      }
+                      if (rowData.product?.title && rowData.product.title.trim() !== '') {
+                        return rowData.product.title;
+                      }
+                      return '';
+                    }}
+                    cellRender={(data: any) => {
+                      const value = data.value || '';
+                      if (value === '' || value === '-') {
+                        return '';
+                      }
+                      return value;
+                    }}
                   />
                   <Column
                     dataField="price"
@@ -1208,15 +1435,17 @@ export default function OrdersPage() {
                     width={80}
                     allowEditing={false}
                     cellRender={(data: any) => {
-                      const product = data.data.product;
-                      if (product?.image) {
+                      const rowData = data.data as OrderProduct;
+                      const imageUrl = rowData.image || rowData.product?.image;
+                      
+                      if (imageUrl) {
                         return (
                           <div className="flex items-center justify-center p-1">
                             <img
-                              src={product.image}
-                              alt={product.title || 'Ürün'}
+                              src={imageUrl}
+                              alt={rowData.title || rowData.product?.title || 'Ürün'}
                               className="h-10 w-10 cursor-pointer rounded border border-gray-200 object-cover shadow-sm transition-transform hover:scale-110"
-                              onClick={() => handleShowImage(product.image)}
+                              onClick={() => handleShowImage(imageUrl)}
                               onError={(e) => {
                                 const target = e.target as HTMLImageElement;
                                 target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="40" height="40"%3E%3Crect fill="%23e5e7eb" width="40" height="40"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%239ca3af" font-size="8"%3EYok%3C/text%3E%3C/svg%3E';
@@ -1225,19 +1454,28 @@ export default function OrdersPage() {
                           </div>
                         );
                       }
+                      const fileInputId = `file-input-${rowData._uniqueKey || Math.random()}`;
                       return (
                         <div className="flex items-center justify-center p-1">
+                          <input
+                            id={fileInputId}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => handleImageUpload(e, rowData)}
+                          />
                           <Button
-                            text="Foto"
+                            text="Fotoğraf Ekle"
                             stylingMode="outlined"
                             icon="image"
-                            width={70}
-                            onClick={() => {
-                              const product = data.data.product;
-                              if (product?.image) {
-                                handleShowImage(product.image);
-                              } else {
-                                alert('Bu ürün için fotoğraf bulunamadı. Lütfen geçerli bir Ürün ID girin.');
+                            width={100}
+                            onClick={(e: any) => {
+                              e.event?.stopPropagation();
+                              e.event?.preventDefault();
+                              // File input'u tetikle
+                              const input = document.getElementById(fileInputId) as HTMLInputElement;
+                              if (input) {
+                                input.click();
                               }
                             }}
                           />
